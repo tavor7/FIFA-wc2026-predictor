@@ -28,8 +28,7 @@ export const api = {
   bootstrap: () => request<{ bootstrapped: boolean }>("/bootstrap", { method: "POST" }),
 
   refresh: async () => {
-    await request("/sync/matches", { method: "POST" });
-    return request("/predictions/generate", { method: "POST" });
+    await request("/sync/full", { method: "POST" });
   },
 
   syncLive: () => request("/sync/live", { method: "POST" }),

@@ -317,3 +317,42 @@ CREATE INDEX IF NOT EXISTS idx_bracket_stage ON bracket_nodes(stage, round_name)
 CREATE INDEX IF NOT EXISTS idx_feature_store_match ON feature_store(match_id, generated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_prediction_history_match ON prediction_history(match_id, version DESC);
 CREATE INDEX IF NOT EXISTS idx_sync_log_job ON sync_log(job_name, finished_at DESC);
+
+-- Prediction system overhaul columns
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS competition_weight REAL;
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS competition_type TEXT;
+
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS lambda_home_mean REAL;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS lambda_home_std REAL;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS lambda_away_mean REAL;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS lambda_away_std REAL;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS prediction_type TEXT DEFAULT 'prematch';
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS model_version TEXT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS feature_version TEXT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS data_snapshot_timestamp TEXT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS model_weights_json TEXT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS freshness_json TEXT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_prediction_json TEXT;
+
+ALTER TABLE prediction_history ADD COLUMN IF NOT EXISTS explanation_json TEXT;
+ALTER TABLE prediction_history ADD COLUMN IF NOT EXISTS ensemble_json TEXT;
+ALTER TABLE prediction_history ADD COLUMN IF NOT EXISTS change_bullets_json TEXT;
+ALTER TABLE prediction_history ADD COLUMN IF NOT EXISTS model_version TEXT;
+
+CREATE TABLE IF NOT EXISTS model_registry (
+    id SERIAL PRIMARY KEY,
+    model_version TEXT NOT NULL,
+    feature_version TEXT NOT NULL,
+    trained_at TEXT NOT NULL,
+    weights_json TEXT,
+    active_models_json TEXT,
+    metrics_json TEXT,
+    freshness_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    id SERIAL PRIMARY KEY,
+    run_label TEXT NOT NULL,
+    run_at TEXT NOT NULL,
+    metrics_json TEXT NOT NULL
+);

@@ -148,6 +148,17 @@ export async function pageMatch(id) {
     `<div class="page-header"><a class="back-link" href="#/">← Back</a></div>` +
     matchCardHtml(match, { clickable: false });
 
+  if (pred?.lambda_home_mean != null) {
+    const lh = `${Number(pred.lambda_home_mean).toFixed(2)} ± ${Number(pred.lambda_home_std || 0).toFixed(2)}`;
+    const la = `${Number(pred.lambda_away_mean).toFixed(2)} ± ${Number(pred.lambda_away_std || 0).toFixed(2)}`;
+    html += section("Expected goals (λ)", `<div class="form-grid">
+      <div class="form-card"><span>${escapeHtml(match.home_team)} λ</span><strong>${lh}</strong></div>
+      <div class="form-card"><span>${escapeHtml(match.away_team)} λ</span><strong>${la}</strong></div>
+      <div class="form-card"><span>Prediction type</span><strong>${escapeHtml(pred.prediction_type || "prematch")}</strong></div>
+      ${pred.generated_at ? `<div class="form-card"><span>Last update</span><strong>${formatDateIsrael(pred.generated_at)}</strong></div>` : ""}
+    </div>`);
+  }
+
   html += factorChartHtml(pred, canvasId);
 
   const liveProbId = `live-prob-${id}`;
@@ -160,8 +171,13 @@ export async function pageMatch(id) {
 
   try {
     const hist = await request(`/matches/${id}/history`);
-    if (hist.what_changed?.reason) {
-      html += section("What changed", `<p>${escapeHtml(hist.what_changed.reason)}</p>`);
+    const bullets = hist.what_changed?.bullets || [];
+    if (bullets.length) {
+      html += section("What changed?", `<ul>${bullets.map((b) =>
+        `<li>${escapeHtml(b)}</li>`
+      ).join("")}</ul>`);
+    } else if (hist.what_changed?.reason) {
+      html += section("What changed?", `<p>${escapeHtml(hist.what_changed.reason)}</p>`);
     }
   } catch { /* optional */ }
 
@@ -286,9 +302,11 @@ export async function pagePlayers() {
 }
 
 export async function pageReports() {
-  const [report, freshness] = await Promise.all([
+  const [report, freshness, calibration, backtest] = await Promise.all([
     request("/reports/summary"),
     request("/meta/freshness").catch(() => null),
+    request("/evaluation/calibration").catch(() => null),
+    request("/evaluation/backtest").catch(() => null),
   ]);
 
   const momHigh = (report.most_momentum || []).map(
@@ -312,13 +330,32 @@ export async function pageReports() {
       `<li>${escapeHtml(w.entity)}: ${Math.round(w.completeness_pct || 0)}% complete (${escapeHtml(w.source || "")})</li>`
     ).join("")}</ul>`);
   }
+
+  if (calibration?.samples) {
+    html += section("Calibration (stored predictions)", `<div class="form-grid">
+      <div class="form-card"><span>Samples</span><strong>${calibration.samples}</strong></div>
+      <div class="form-card"><span>Brier score</span><strong>${calibration.brier_score ?? "—"}</strong></div>
+      <div class="form-card"><span>Log loss</span><strong>${calibration.log_loss ?? "—"}</strong></div>
+      <div class="form-card"><span>ECE (home win)</span><strong>${calibration.ece_home_win ?? "—"}</strong></div>
+    </div>`);
+  }
+
+  if (backtest?.matches) {
+    html += section("Backtest (walk-forward)", `<div class="form-grid">
+      <div class="form-card"><span>Matches</span><strong>${backtest.matches}</strong></div>
+      <div class="form-card"><span>Outcome accuracy</span><strong>${((backtest.outcome_accuracy || 0) * 100).toFixed(1)}%</strong></div>
+      <div class="form-card"><span>Exact score</span><strong>${((backtest.exact_score_accuracy || 0) * 100).toFixed(1)}%</strong></div>
+      <div class="form-card"><span>Top-3 scoreline</span><strong>${((backtest.top3_scoreline_accuracy || 0) * 100).toFixed(1)}%</strong></div>
+    </div>`);
+  }
   return html;
 }
 
 export async function pageMonitor() {
-  const [status, freshness] = await Promise.all([
+  const [status, freshness, calibration] = await Promise.all([
     request("/monitor/status"),
     request("/meta/freshness").catch(() => null),
+    request("/evaluation/calibration").catch(() => null),
   ]);
 
   const jobs = (status.recent_jobs || []).map(
@@ -349,6 +386,10 @@ export async function pageMonitor() {
 
   return disclaimerHtml(true) +
     `<h2 class="page-title">System monitor</h2>` +
+    `<div class="page-intro">
+      <button id="btn-admin-predict" class="btn-primary" type="button">Admin: refresh predictions</button>
+      <span class="muted">User sync only updates data — predictions run on the scheduler.</span>
+    </div>` +
     section("Health", `<div class="form-grid">
       <div class="form-card"><span>Database</span><strong>${escapeHtml(status.database || "—")}</strong></div>
       <div class="form-card"><span>Status</span><strong class="status-ok">${escapeHtml(status.health || "ok")}</strong></div>
@@ -359,5 +400,17 @@ export async function pageMonitor() {
     section("Table rows", tableHtml(["Table", "Rows"], countRows.length ? countRows : [`<tr><td colspan="2">No counts</td></tr>`])) +
     section("Stats", statsHtml(status.stats || {})) +
     section("Recent sync jobs", tableHtml(["Job", "Status", "Records", "Finished (Israel)"], jobs.length ? jobs : [`<tr><td colspan="4">No jobs logged yet</td></tr>`])) +
+    (calibration?.samples
+      ? section("Model calibration", `<div class="form-grid">
+          <div class="form-card"><span>Brier</span><strong>${calibration.brier_score ?? "—"}</strong></div>
+          <div class="form-card"><span>Log loss</span><strong>${calibration.log_loss ?? "—"}</strong></div>
+          <div class="form-card"><span>Samples</span><strong>${calibration.samples}</strong></div>
+        </div>`)
+      : "") +
+    (freshness?.staleness_warnings?.length
+      ? section("Stale data warnings", `<ul>${freshness.staleness_warnings.map((w) =>
+          `<li>${escapeHtml(w)}</li>`
+        ).join("")}</ul>`)
+      : "") +
     section("Data freshness", tableHtml(["Entity", "Complete", "Source", "Updated (Israel)"], entities.length ? entities : [`<tr><td colspan="4">No freshness data</td></tr>`]));
 }

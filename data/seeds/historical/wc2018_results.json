@@ -1,0 +1,122 @@
+[
+  {
+    "external_fixture_id": "wc2018-001",
+    "date": "2018-06-14T17:00:00+00:00",
+    "league": "FIFA World Cup",
+    "season": 2018,
+    "home_team": "Russia",
+    "away_team": "Saudi Arabia",
+    "status": "FT",
+    "home_goals": 5,
+    "away_goals": 0,
+    "venue": "Luzhniki"
+  },
+  {
+    "external_fixture_id": "wc2018-002",
+    "date": "2018-06-15T17:00:00+00:00",
+    "league": "FIFA World Cup",
+    "season": 2018,
+    "home_team": "Egypt",
+    "away_team": "Uruguay",
+    "status": "FT",
+    "home_goals": 0,
+    "away_goals": 1,
+    "venue": "Ekaterinburg"
+  },
+  {
+    "external_fixture_id": "wc2018-003",
+    "date": "2018-06-16T13:00:00+00:00",
+    "league": "FIFA World Cup",
+    "season": 2018,
+    "home_team": "France",
+    "away_team": "Australia",
+    "status": "FT",
+    "home_goals": 2,
+    "away_goals": 1,
+    "venue": "Kazan"
+  },
+  {
+    "external_fixture_id": "wc2018-004",
+    "date": "2018-06-16T16:00:00+00:00",
+    "league": "FIFA World Cup",
+    "season": 2018,
+    "home_team": "Argentina",
+    "away_team": "Iceland",
+    "status": "FT",
+    "home_goals": 1,
+    "away_goals": 1,
+    "venue": "Spartak"
+  },
+  {
+    "external_fixture_id": "wc2018-005",
+    "date": "2018-06-17T13:00:00+00:00",
+    "league": "FIFA World Cup",
+    "season": 2018,
+    "home_team": "Germany",
+    "away_team": "Mexico",
+    "status": "FT",
+    "home_goals": 0,
+    "away_goals": 1,
+    "venue": "Luzhniki"
+  },
+  {
+    "external_fixture_id": "wc2018-006",
+    "date": "2018-06-18T16:00:00+00:00",
+    "league": "FIFA World Cup",
+    "season": 2018,
+    "home_team": "Brazil",
+    "away_team": "Switzerland",
+    "status": "FT",
+    "home_goals": 1,
+    "away_goals": 1,
+    "venue": "Rostov"
+  },
+  {
+    "external_fixture_id": "wc2018-007",
+    "date": "2018-06-22T18:00:00+00:00",
+    "league": "FIFA World Cup",
+    "season": 2018,
+    "home_team": "Brazil",
+    "away_team": "Costa Rica",
+    "status": "FT",
+    "home_goals": 2,
+    "away_goals": 0,
+    "venue": "Saint Petersburg"
+  },
+  {
+    "external_fixture_id": "wc2018-008",
+    "date": "2018-06-30T17:00:00+00:00",
+    "league": "FIFA World Cup",
+    "season": 2018,
+    "home_team": "France",
+    "away_team": "Argentina",
+    "status": "FT",
+    "home_goals": 4,
+    "away_goals": 3,
+    "venue": "Kazan"
+  },
+  {
+    "external_fixture_id": "wc2018-009",
+    "date": "2018-07-11T19:00:00+00:00",
+    "league": "FIFA World Cup",
+    "season": 2018,
+    "home_team": "France",
+    "away_team": "Belgium",
+    "status": "FT",
+    "home_goals": 1,
+    "away_goals": 0,
+    "venue": "Saint Petersburg"
+  },
+  {
+    "external_fixture_id": "wc2018-010",
+    "date": "2018-07-15T15:00:00+00:00",
+    "league": "FIFA World Cup",
+    "season": 2018,
+    "home_team": "France",
+    "away_team": "Croatia",
+    "status": "FT",
+    "home_goals": 4,
+    "away_goals": 2,
+    "venue": "Luzhniki"
+  }
+]

@@ -448,6 +448,8 @@ def _migrate_extended_schema(conn: Any) -> None:
         "round_name": "TEXT",
         "referee_name": "TEXT",
         "weather_json": "TEXT",
+        "competition_type": "TEXT",
+        "competition_weight": "REAL",
     }
     if _table_exists(conn, "matches"):
         existing_match = _table_columns(conn, "matches")
@@ -461,6 +463,17 @@ def _migrate_extended_schema(conn: Any) -> None:
         "model_agreement": "TEXT",
         "ensemble_json": "TEXT",
         "factor_breakdown_json": "TEXT",
+        "lambda_home_mean": "REAL",
+        "lambda_home_std": "REAL",
+        "lambda_away_mean": "REAL",
+        "lambda_away_std": "REAL",
+        "prediction_type": "TEXT",
+        "model_version": "TEXT",
+        "feature_version": "TEXT",
+        "data_snapshot_timestamp": "TEXT",
+        "model_weights_json": "TEXT",
+        "freshness_json": "TEXT",
+        "live_prediction_json": "TEXT",
     }
     existing = _table_columns(conn, "predictions")
     for col, col_type in pred_cols.items():
@@ -507,6 +520,66 @@ def _migrate_extended_schema(conn: Any) -> None:
         for col, col_type in player_cols.items():
             if col not in existing_players:
                 conn.execute(f"ALTER TABLE players ADD COLUMN {col} {col_type}")
+
+    if _table_exists(conn, "prediction_history"):
+        hist_cols = {
+            "explanation_json": "TEXT",
+            "ensemble_json": "TEXT",
+            "change_bullets_json": "TEXT",
+            "model_version": "TEXT",
+        }
+        existing_hist = _table_columns(conn, "prediction_history")
+        for col, col_type in hist_cols.items():
+            if col not in existing_hist:
+                conn.execute(f"ALTER TABLE prediction_history ADD COLUMN {col} {col_type}")
+
+    registry_sql = """
+        CREATE TABLE IF NOT EXISTS model_registry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_version TEXT NOT NULL,
+            feature_version TEXT,
+            trained_at TEXT NOT NULL,
+            weights_json TEXT,
+            active_models_json TEXT,
+            metrics_json TEXT
+        )
+    """
+    backtest_sql = """
+        CREATE TABLE IF NOT EXISTS backtest_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_at TEXT NOT NULL,
+            tournament TEXT,
+            metrics_json TEXT NOT NULL
+        )
+    """
+    if config.USE_POSTGRES:
+        registry_sql = registry_sql.replace(
+            "INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY"
+        ).replace("id SERIAL PRIMARY KEY", "id SERIAL PRIMARY KEY")
+        backtest_sql = backtest_sql.replace(
+            "INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY"
+        )
+    if not _table_exists(conn, "model_registry"):
+        conn.execute(registry_sql if not config.USE_POSTGRES else """
+            CREATE TABLE IF NOT EXISTS model_registry (
+                id SERIAL PRIMARY KEY,
+                model_version TEXT NOT NULL,
+                feature_version TEXT,
+                trained_at TEXT NOT NULL,
+                weights_json TEXT,
+                active_models_json TEXT,
+                metrics_json TEXT
+            )
+        """)
+    if not _table_exists(conn, "backtest_runs"):
+        conn.execute(backtest_sql if not config.USE_POSTGRES else """
+            CREATE TABLE IF NOT EXISTS backtest_runs (
+                id SERIAL PRIMARY KEY,
+                run_at TEXT NOT NULL,
+                tournament TEXT,
+                metrics_json TEXT NOT NULL
+            )
+        """)
 
     if config.USE_POSTGRES:
         conn.execute(
@@ -737,14 +810,31 @@ def upsert_injury(
 
 
 def upsert_prediction(
-    match_id: int, predicted_home_goals: float, predicted_away_goals: float,
-    home_win_prob: float, draw_prob: float, away_win_prob: float,
-    exact_score_prob: float, top_scorelines: list[dict[str, Any]], explanation: str,
+    match_id: int,
+    predicted_home_goals: float,
+    predicted_away_goals: float,
+    home_win_prob: float,
+    draw_prob: float,
+    away_win_prob: float,
+    exact_score_prob: float,
+    top_scorelines: list[dict[str, Any]],
+    explanation: str,
     confidence_pct: Optional[float] = None,
     data_completeness_pct: Optional[float] = None,
     model_agreement: Optional[str] = None,
     ensemble_json: Optional[dict[str, Any]] = None,
     factor_breakdown_json: Optional[dict[str, Any]] = None,
+    lambda_home_mean: Optional[float] = None,
+    lambda_home_std: Optional[float] = None,
+    lambda_away_mean: Optional[float] = None,
+    lambda_away_std: Optional[float] = None,
+    prediction_type: Optional[str] = "prematch",
+    model_version: Optional[str] = None,
+    feature_version: Optional[str] = None,
+    data_snapshot_timestamp: Optional[str] = None,
+    model_weights_json: Optional[dict[str, Any]] = None,
+    freshness_json: Optional[dict[str, Any]] = None,
+    live_prediction_json: Optional[dict[str, Any]] = None,
 ) -> None:
     now = datetime.utcnow().isoformat()
     with get_connection() as conn:
@@ -756,8 +846,11 @@ def upsert_prediction(
                 home_win_prob, draw_prob, away_win_prob, exact_score_prob,
                 top_scorelines_json, explanation,
                 confidence_pct, data_completeness_pct, model_agreement,
-                ensemble_json, factor_breakdown_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ensemble_json, factor_breakdown_json,
+                lambda_home_mean, lambda_home_std, lambda_away_mean, lambda_away_std,
+                prediction_type, model_version, feature_version, data_snapshot_timestamp,
+                model_weights_json, freshness_json, live_prediction_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(match_id) DO UPDATE SET
                 generated_at=excluded.generated_at,
                 predicted_home_goals=excluded.predicted_home_goals,
@@ -772,7 +865,18 @@ def upsert_prediction(
                 data_completeness_pct=excluded.data_completeness_pct,
                 model_agreement=excluded.model_agreement,
                 ensemble_json=excluded.ensemble_json,
-                factor_breakdown_json=excluded.factor_breakdown_json
+                factor_breakdown_json=excluded.factor_breakdown_json,
+                lambda_home_mean=excluded.lambda_home_mean,
+                lambda_home_std=excluded.lambda_home_std,
+                lambda_away_mean=excluded.lambda_away_mean,
+                lambda_away_std=excluded.lambda_away_std,
+                prediction_type=excluded.prediction_type,
+                model_version=excluded.model_version,
+                feature_version=excluded.feature_version,
+                data_snapshot_timestamp=excluded.data_snapshot_timestamp,
+                model_weights_json=excluded.model_weights_json,
+                freshness_json=excluded.freshness_json,
+                live_prediction_json=excluded.live_prediction_json
             """,
             (
                 match_id, now, predicted_home_goals, predicted_away_goals,
@@ -781,6 +885,11 @@ def upsert_prediction(
                 confidence_pct, data_completeness_pct, model_agreement,
                 json.dumps(ensemble_json) if ensemble_json is not None else None,
                 json.dumps(factor_breakdown_json) if factor_breakdown_json is not None else None,
+                lambda_home_mean, lambda_home_std, lambda_away_mean, lambda_away_std,
+                prediction_type, model_version, feature_version, data_snapshot_timestamp,
+                json.dumps(model_weights_json) if model_weights_json is not None else None,
+                json.dumps(freshness_json) if freshness_json is not None else None,
+                json.dumps(live_prediction_json) if live_prediction_json is not None else None,
             ),
         )
 

@@ -32,6 +32,13 @@ def prediction_payload(pred: dict[str, Any] | None) -> dict[str, Any] | None:
         p["ensemble_json"] = json.loads(p["ensemble_json"])
     if p.get("factor_breakdown_json") and isinstance(p["factor_breakdown_json"], str):
         p["factor_breakdown_json"] = json.loads(p["factor_breakdown_json"])
+    if p.get("freshness_json") and isinstance(p["freshness_json"], str):
+        try:
+            p["freshness_json"] = json.loads(p["freshness_json"])
+        except json.JSONDecodeError:
+            pass
+    if isinstance(p.get("freshness_json"), dict):
+        p["staleness_warnings"] = p["freshness_json"].get("staleness_warnings") or []
     return p
 
 
@@ -57,6 +64,16 @@ def match_with_prediction(row) -> dict[str, Any]:
             "model_agreement": p.get("model_agreement"),
             "ensemble": p.get("ensemble_json"),
             "factor_breakdown": p.get("factor_breakdown_json"),
+            "lambda_home_mean": p.get("lambda_home_mean"),
+            "lambda_home_std": p.get("lambda_home_std"),
+            "lambda_away_mean": p.get("lambda_away_mean"),
+            "lambda_away_std": p.get("lambda_away_std"),
+            "prediction_type": p.get("prediction_type", "prematch"),
+            "model_version": p.get("model_version"),
+            "feature_version": p.get("feature_version"),
+            "freshness_json": p.get("freshness_json"),
+            "staleness_warnings": p.get("staleness_warnings") or [],
+            "live_prediction_json": p.get("live_prediction_json"),
         }
     m["home"] = team_meta(m["home_team"])
     m["away"] = team_meta(m["away_team"])

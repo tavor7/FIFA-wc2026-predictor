@@ -16,7 +16,10 @@ from src.analytics.momentum import MomentumEngine
 from src.analytics.team_form import TeamFormAnalyzer
 from src.api.helpers import match_with_prediction, row_to_dict, team_meta
 from src.db import db_backend
-from src.predict import generate_predictions, retrain_and_predict
+from src.services.data_sync_service import DataSyncService
+from src.services.model_training_service import ModelTrainingService
+from src.services.prediction_generation_service import PredictionGenerationService
+from src.services.explanation_service import ExplanationService
 from src.analytics.computed_strength import recompute_and_persist
 from src.sync_historical import sync_historical_seasons
 from src.sync_injuries import sync_injuries
@@ -45,20 +48,13 @@ logger = logging.getLogger(__name__)
 
 
 def _run_full_sync() -> None:
-    ensure_baseline_data(min_matches=10, run_predictions=False)
-    if len(db.get_all_finished_matches()) < 10:
-        sync_historical_seasons()
-    else:
-        recompute_and_persist()
-    sync_all_matches(days_ahead=120, days_back=30)
-    sync_standings()
-    sync_bracket()
-    sync_squads()
-    sync_h2h()
-    sync_weather()
-    sync_injuries()
-    sync_events()
-    generate_predictions()
+    sync_svc = DataSyncService()
+    sync_svc.full_sync()
+    PredictionGenerationService().generate_all()
+
+
+def _run_data_sync_only() -> None:
+    DataSyncService().full_sync()
 
 
 @router.get("/health")
@@ -74,13 +70,16 @@ def meta() -> dict[str, Any]:
 @router.get("/meta/freshness")
 def freshness() -> dict[str, Any]:
     rows = ext.get_all_data_freshness()
+    snapshot = ext.build_freshness_snapshot()
+    stale_msgs = ext.staleness_warnings(snapshot)
     warnings = [row_to_dict(r) for r in rows if float(dict(r).get("completeness_pct") or 100) < 70]
     latest_sync = ext.get_recent_sync_logs(limit=5)
     return {
         "entities": [row_to_dict(r) for r in rows],
         "warnings": [row_to_dict(r) for r in warnings],
+        "staleness_warnings": stale_msgs,
         "recent_syncs": [row_to_dict(r) for r in latest_sync],
-        "sources": ["api-football", "football-data.org", "open-meteo"],
+        "sources": ["api-football", "football-data.org", "open-meteo", "fc26-kaggle"],
     }
 
 
@@ -191,18 +190,27 @@ def match_live_probs(match_id: int) -> list[dict[str, Any]]:
 
 @router.get("/matches/{match_id}/history")
 def prediction_history(match_id: int) -> dict[str, Any]:
+    svc = ExplanationService()
+    summary = svc.match_change_summary(match_id)
     rows = ext.get_prediction_history(match_id)
     history = [row_to_dict(r) for r in rows]
-    what_changed = None
-    if len(history) >= 2:
-        latest, prev = history[0], history[1]
-        what_changed = {
-            "home_win_delta": (latest.get("home_win_prob") or 0) - (prev.get("home_win_prob") or 0),
-            "reason": latest.get("reason_changed"),
-            "previous_version": prev.get("version"),
-            "current_version": latest.get("version"),
-        }
-    return {"match_id": match_id, "history": history, "what_changed": what_changed}
+    for row in history:
+        if row.get("change_bullets_json") and isinstance(row["change_bullets_json"], str):
+            try:
+                row["change_bullets"] = json.loads(row["change_bullets_json"])
+            except json.JSONDecodeError:
+                row["change_bullets"] = []
+    what_changed = summary.get("what_changed") or {}
+    return {
+        "match_id": match_id,
+        "history": history,
+        "what_changed": {
+            "reason": summary.get("reason") or what_changed.get("summary"),
+            "bullets": what_changed.get("bullets") or [],
+            "previous_version": summary.get("previous_version"),
+            "current_version": summary.get("current_version"),
+        },
+    }
 
 
 @router.get("/matches/{match_id}")
@@ -385,21 +393,52 @@ def sync_inj() -> dict[str, Any]:
 
 
 @router.post("/sync/full")
-def sync_full(bg: BackgroundTasks) -> dict[str, str]:
-    bg.add_task(_run_full_sync)
-    return {"status": "started", "message": "Full sync running in background"}
+def sync_full(bg: BackgroundTasks, include_predictions: bool = False) -> dict[str, str]:
+    bg.add_task(_run_full_sync if include_predictions else _run_data_sync_only)
+    return {
+        "status": "started",
+        "message": "Full sync running in background"
+        + (" (with predictions)" if include_predictions else " (data only)"),
+    }
+
+
+@router.post("/admin/predictions/refresh")
+def admin_refresh_predictions(bg: BackgroundTasks) -> dict[str, str]:
+    def _job() -> None:
+        PredictionGenerationService().generate_all()
+
+    bg.add_task(_job)
+    return {"status": "started", "message": "Regenerating all predictions in background"}
 
 
 @router.post("/predictions/generate")
 def gen_predictions(bg: BackgroundTasks) -> dict[str, Any]:
-    if len(db.get_all_finished_matches()) < 10:
-        sync_historical_seasons()
-    return generate_predictions()
+    def _job() -> None:
+        if len(db.get_all_finished_matches()) < 10:
+            sync_historical_seasons()
+        PredictionGenerationService().generate_all()
+
+    bg.add_task(_job)
+    return {"status": "started", "message": "Prediction generation started"}
 
 
 @router.post("/model/retrain")
 def retrain() -> dict[str, Any]:
-    return retrain_and_predict()
+    return ModelTrainingService().retrain_and_predict()
+
+
+@router.get("/evaluation/calibration")
+def evaluation_calibration(limit: int = 200) -> dict[str, Any]:
+    from src.evaluation.calibration import evaluate_stored_predictions
+
+    return evaluate_stored_predictions(limit=limit)
+
+
+@router.get("/evaluation/backtest")
+def evaluation_backtest(league: str = "World Cup", limit: int = 500) -> dict[str, Any]:
+    from src.evaluation.backtest import backtest_tournament
+
+    return backtest_tournament(league_filter=league, limit=limit)
 
 
 @router.post("/seed/players")

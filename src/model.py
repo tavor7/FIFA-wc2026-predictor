@@ -37,7 +37,7 @@ class GoalPredictionModel:
 
     def train_model(self, min_samples: int = 10) -> dict[str, Any]:
         """Train on finished matches in the database."""
-        X, y_home, y_away, match_ids = build_training_dataset()
+        X, y_home, y_away, match_ids, sample_weights = build_training_dataset()
 
         if len(X) < min_samples:
             logger.warning(
@@ -52,8 +52,8 @@ class GoalPredictionModel:
                 "message": f"Insufficient data ({len(X)} matches). Using heuristic predictions.",
             }
 
-        self.home_model.fit(X, y_home)
-        self.away_model.fit(X, y_away)
+        self.home_model.fit(X, y_home, sample_weight=sample_weights)
+        self.away_model.fit(X, y_away, sample_weight=sample_weights)
         self._is_trained = True
 
         home_preds = self.home_model.predict(X)

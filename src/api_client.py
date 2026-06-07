@@ -491,6 +491,45 @@ class APIClient:
         return records
 
     @staticmethod
+    def parse_fixture_players(api_players: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Parse API-Football fixture player stats into flat records."""
+        records: list[dict[str, Any]] = []
+        for team_block in api_players:
+            team_name = team_block.get("team", {}).get("name", "Unknown")
+            for entry in team_block.get("players") or []:
+                player = entry.get("player") or {}
+                stats = entry.get("statistics") or []
+                stat_map: dict[str, Any] = {}
+                for block in stats:
+                    for item in block.get("statistics") or []:
+                        stat_map[item.get("type", "")] = item.get("value")
+                goals = stat_map.get("Goals") or {}
+                cards = stat_map.get("Cards") or {}
+                games = stat_map.get("Games") or {}
+                if isinstance(goals, dict):
+                    goals_val = goals.get("total") or 0
+                    assists_val = goals.get("assists") or 0
+                else:
+                    goals_val = goals or 0
+                    assists_val = 0
+                rating_raw = games.get("rating") if isinstance(games, dict) else None
+                rating = float(rating_raw) if rating_raw not in (None, "-") else None
+                records.append(
+                    {
+                        "team": team_name,
+                        "api_player_id": player.get("id"),
+                        "player_name": player.get("name", "Unknown"),
+                        "goals": int(goals_val or 0),
+                        "assists": int(assists_val or 0),
+                        "yellow_cards": int((cards.get("yellow") if isinstance(cards, dict) else 0) or 0),
+                        "red_cards": int((cards.get("red") if isinstance(cards, dict) else 0) or 0),
+                        "minutes": games.get("minutes") if isinstance(games, dict) else None,
+                        "rating": rating,
+                    }
+                )
+        return records
+
+    @staticmethod
     def parse_standings(api_standings: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Parse API-Football standings response into flat group rows."""
         rows: list[dict[str, Any]] = []

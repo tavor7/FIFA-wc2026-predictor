@@ -1,0 +1,122 @@
+[
+  {
+    "external_fixture_id": "copa2024-001",
+    "date": "2024-06-20T22:00:00+00:00",
+    "league": "Copa America",
+    "season": 2024,
+    "home_team": "Argentina",
+    "away_team": "Canada",
+    "status": "FT",
+    "home_goals": 2,
+    "away_goals": 0,
+    "venue": "Atlanta"
+  },
+  {
+    "external_fixture_id": "copa2024-002",
+    "date": "2024-06-21T22:00:00+00:00",
+    "league": "Copa America",
+    "season": 2024,
+    "home_team": "Brazil",
+    "away_team": "Costa Rica",
+    "status": "FT",
+    "home_goals": 0,
+    "away_goals": 0,
+    "venue": "Los Angeles"
+  },
+  {
+    "external_fixture_id": "copa2024-003",
+    "date": "2024-06-22T22:00:00+00:00",
+    "league": "Copa America",
+    "season": 2024,
+    "home_team": "USA",
+    "away_team": "Bolivia",
+    "status": "FT",
+    "home_goals": 2,
+    "away_goals": 0,
+    "venue": "Dallas"
+  },
+  {
+    "external_fixture_id": "copa2024-004",
+    "date": "2024-06-24T22:00:00+00:00",
+    "league": "Copa America",
+    "season": 2024,
+    "home_team": "Colombia",
+    "away_team": "Brazil",
+    "status": "FT",
+    "home_goals": 2,
+    "away_goals": 1,
+    "venue": "Santa Clara"
+  },
+  {
+    "external_fixture_id": "copa2024-005",
+    "date": "2024-06-25T22:00:00+00:00",
+    "league": "Copa America",
+    "season": 2024,
+    "home_team": "USA",
+    "away_team": "Panama",
+    "status": "FT",
+    "home_goals": 1,
+    "away_goals": 2,
+    "venue": "Atlanta"
+  },
+  {
+    "external_fixture_id": "copa2024-006",
+    "date": "2024-06-29T22:00:00+00:00",
+    "league": "Copa America",
+    "season": 2024,
+    "home_team": "Argentina",
+    "away_team": "Peru",
+    "status": "FT",
+    "home_goals": 2,
+    "away_goals": 0,
+    "venue": "Miami"
+  },
+  {
+    "external_fixture_id": "copa2024-007",
+    "date": "2024-07-04T22:00:00+00:00",
+    "league": "Copa America",
+    "season": 2024,
+    "home_team": "Argentina",
+    "away_team": "Ecuador",
+    "status": "FT",
+    "home_goals": 1,
+    "away_goals": 1,
+    "venue": "Houston"
+  },
+  {
+    "external_fixture_id": "copa2024-008",
+    "date": "2024-07-06T22:00:00+00:00",
+    "league": "Copa America",
+    "season": 2024,
+    "home_team": "Colombia",
+    "away_team": "Panama",
+    "status": "FT",
+    "home_goals": 5,
+    "away_goals": 0,
+    "venue": "Glendale"
+  },
+  {
+    "external_fixture_id": "copa2024-009",
+    "date": "2024-07-09T22:00:00+00:00",
+    "league": "Copa America",
+    "season": 2024,
+    "home_team": "Argentina",
+    "away_team": "Canada",
+    "status": "FT",
+    "home_goals": 2,
+    "away_goals": 0,
+    "venue": "East Rutherford"
+  },
+  {
+    "external_fixture_id": "copa2024-010",
+    "date": "2024-07-14T22:00:00+00:00",
+    "league": "Copa America",
+    "season": 2024,
+    "home_team": "Argentina",
+    "away_team": "Colombia",
+    "status": "FT",
+    "home_goals": 1,
+    "away_goals": 0,
+    "venue": "Miami"
+  }
+]

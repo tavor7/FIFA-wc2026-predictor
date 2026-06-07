@@ -784,6 +784,107 @@ def get_all_data_freshness() -> list[Row]:
         ).fetchall()
 
 
+def build_freshness_snapshot() -> dict[str, Any]:
+    snapshot: dict[str, Any] = {}
+    for row in get_all_data_freshness():
+        d = dict(row)
+        snapshot[d["entity"]] = {
+            "last_updated": d.get("last_updated"),
+            "completeness_pct": d.get("completeness_pct"),
+            "source": d.get("source"),
+        }
+    return snapshot
+
+
+def staleness_warnings(snapshot: dict[str, Any]) -> list[str]:
+    from datetime import datetime, timedelta
+    from src import config
+
+    warnings: list[str] = []
+    threshold = timedelta(hours=config.STALE_DATA_HOURS)
+    now = datetime.utcnow()
+    labels = {
+        "fixtures": "Fixture data",
+        "injuries": "Injury reports",
+        "lineups": "Lineups",
+        "team_stats": "Team statistics",
+        "player_stats": "Player statistics",
+        "models": "Model training",
+        "predictions": "Predictions",
+    }
+    for key, label in labels.items():
+        entry = snapshot.get(key) or {}
+        ts = entry.get("last_updated")
+        if not ts:
+            warnings.append(f"{label} never synced")
+            continue
+        try:
+            dt = datetime.fromisoformat(str(ts).replace("Z", ""))
+            if now - dt > threshold:
+                warnings.append(f"{label} older than {config.STALE_DATA_HOURS}h")
+        except ValueError:
+            continue
+    return warnings
+
+
+def insert_model_registry(
+    model_version: str,
+    feature_version: Optional[str] = None,
+    weights_json: Optional[Any] = None,
+    active_models_json: Optional[Any] = None,
+    metrics_json: Optional[Any] = None,
+) -> int:
+    now = _now()
+    with get_connection() as conn:
+        _execute(
+            conn,
+            """
+            INSERT INTO model_registry (
+                model_version, feature_version, trained_at,
+                weights_json, active_models_json, metrics_json
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                model_version,
+                feature_version,
+                now,
+                json.dumps(weights_json) if weights_json is not None else None,
+                json.dumps(active_models_json) if active_models_json is not None else None,
+                json.dumps(metrics_json) if metrics_json is not None else None,
+            ),
+        )
+        row = _execute(conn, "SELECT last_insert_rowid() AS id").fetchone()
+    return int(row["id"])
+
+
+def get_latest_model_registry() -> Optional[Row]:
+    with get_connection() as conn:
+        if not _table_exists(conn, "model_registry"):
+            return None
+        return _execute(
+            conn,
+            "SELECT * FROM model_registry ORDER BY trained_at DESC LIMIT 1",
+        ).fetchone()
+
+
+def insert_backtest_run(tournament: str, metrics: dict[str, Any]) -> None:
+    with get_connection() as conn:
+        _execute(
+            conn,
+            "INSERT INTO backtest_runs (run_at, tournament, metrics_json) VALUES (?, ?, ?)",
+            (_now(), tournament, json.dumps(metrics)),
+        )
+
+
+def get_latest_backtest_run() -> Optional[Row]:
+    with get_connection() as conn:
+        if not _table_exists(conn, "backtest_runs"):
+            return None
+        return _execute(
+            conn, "SELECT * FROM backtest_runs ORDER BY run_at DESC LIMIT 1"
+        ).fetchone()
+
+
 # ---------------------------------------------------------------------------
 # Prediction history
 # ---------------------------------------------------------------------------
@@ -799,6 +900,10 @@ def insert_prediction_history(
     predicted_away_goals: float,
     features: Optional[dict[str, Any]] = None,
     reason_changed: Optional[str] = None,
+    explanation_json: Optional[Any] = None,
+    ensemble_json: Optional[Any] = None,
+    change_bullets_json: Optional[Any] = None,
+    model_version: Optional[str] = None,
 ) -> None:
     now = _now()
     with get_connection() as conn:
@@ -807,8 +912,9 @@ def insert_prediction_history(
             """
             INSERT INTO prediction_history (
                 match_id, version, generated_at, home_win_prob, draw_prob, away_win_prob,
-                predicted_home_goals, predicted_away_goals, features_json, reason_changed
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                predicted_home_goals, predicted_away_goals, features_json, reason_changed,
+                explanation_json, ensemble_json, change_bullets_json, model_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(match_id, version) DO UPDATE SET
                 generated_at=excluded.generated_at,
                 home_win_prob=excluded.home_win_prob,
@@ -817,7 +923,11 @@ def insert_prediction_history(
                 predicted_home_goals=excluded.predicted_home_goals,
                 predicted_away_goals=excluded.predicted_away_goals,
                 features_json=excluded.features_json,
-                reason_changed=excluded.reason_changed
+                reason_changed=excluded.reason_changed,
+                explanation_json=excluded.explanation_json,
+                ensemble_json=excluded.ensemble_json,
+                change_bullets_json=excluded.change_bullets_json,
+                model_version=excluded.model_version
             """,
             (
                 match_id, version, now,
@@ -825,11 +935,15 @@ def insert_prediction_history(
                 predicted_home_goals, predicted_away_goals,
                 json.dumps(features) if features is not None else None,
                 reason_changed,
+                json.dumps(explanation_json) if explanation_json is not None else None,
+                json.dumps(ensemble_json) if ensemble_json is not None else None,
+                json.dumps(change_bullets_json) if change_bullets_json is not None else None,
+                model_version,
             ),
         )
 
 
-def get_prediction_history(match_id: int) -> list[Row]:
+def get_prediction_history(match_id: int, limit: int = 50) -> list[Row]:
     with get_connection() as conn:
         return _execute(
             conn,
@@ -837,8 +951,9 @@ def get_prediction_history(match_id: int) -> list[Row]:
             SELECT * FROM prediction_history
             WHERE match_id = ?
             ORDER BY version DESC
+            LIMIT ?
             """,
-            (match_id,),
+            (match_id, limit),
         ).fetchall()
 
 

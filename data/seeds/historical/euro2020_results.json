@@ -1,0 +1,122 @@
+[
+  {
+    "external_fixture_id": "euro2020-001",
+    "date": "2021-06-11T19:00:00+00:00",
+    "league": "UEFA Euro",
+    "season": 2020,
+    "home_team": "Italy",
+    "away_team": "Turkey",
+    "status": "FT",
+    "home_goals": 3,
+    "away_goals": 0,
+    "venue": "Rome"
+  },
+  {
+    "external_fixture_id": "euro2020-002",
+    "date": "2021-06-12T13:00:00+00:00",
+    "league": "UEFA Euro",
+    "season": 2020,
+    "home_team": "Denmark",
+    "away_team": "Finland",
+    "status": "FT",
+    "home_goals": 0,
+    "away_goals": 1,
+    "venue": "Copenhagen"
+  },
+  {
+    "external_fixture_id": "euro2020-003",
+    "date": "2021-06-13T13:00:00+00:00",
+    "league": "UEFA Euro",
+    "season": 2020,
+    "home_team": "England",
+    "away_team": "Croatia",
+    "status": "FT",
+    "home_goals": 1,
+    "away_goals": 0,
+    "venue": "Wembley"
+  },
+  {
+    "external_fixture_id": "euro2020-004",
+    "date": "2021-06-15T19:00:00+00:00",
+    "league": "UEFA Euro",
+    "season": 2020,
+    "home_team": "Spain",
+    "away_team": "Sweden",
+    "status": "FT",
+    "home_goals": 0,
+    "away_goals": 0,
+    "venue": "Seville"
+  },
+  {
+    "external_fixture_id": "euro2020-005",
+    "date": "2021-06-19T19:00:00+00:00",
+    "league": "UEFA Euro",
+    "season": 2020,
+    "home_team": "Portugal",
+    "away_team": "Germany",
+    "status": "FT",
+    "home_goals": 2,
+    "away_goals": 4,
+    "venue": "Munich"
+  },
+  {
+    "external_fixture_id": "euro2020-006",
+    "date": "2021-06-26T19:00:00+00:00",
+    "league": "UEFA Euro",
+    "season": 2020,
+    "home_team": "Belgium",
+    "away_team": "Portugal",
+    "status": "FT",
+    "home_goals": 1,
+    "away_goals": 0,
+    "venue": "Seville"
+  },
+  {
+    "external_fixture_id": "euro2020-007",
+    "date": "2021-07-02T19:00:00+00:00",
+    "league": "UEFA Euro",
+    "season": 2020,
+    "home_team": "Switzerland",
+    "away_team": "Spain",
+    "status": "FT",
+    "home_goals": 1,
+    "away_goals": 1,
+    "venue": "Saint Petersburg"
+  },
+  {
+    "external_fixture_id": "euro2020-008",
+    "date": "2021-07-06T19:00:00+00:00",
+    "league": "UEFA Euro",
+    "season": 2020,
+    "home_team": "Italy",
+    "away_team": "Spain",
+    "status": "FT",
+    "home_goals": 1,
+    "away_goals": 1,
+    "venue": "Wembley"
+  },
+  {
+    "external_fixture_id": "euro2020-009",
+    "date": "2021-07-07T19:00:00+00:00",
+    "league": "UEFA Euro",
+    "season": 2020,
+    "home_team": "England",
+    "away_team": "Denmark",
+    "status": "FT",
+    "home_goals": 2,
+    "away_goals": 1,
+    "venue": "Wembley"
+  },
+  {
+    "external_fixture_id": "euro2020-010",
+    "date": "2021-07-11T19:00:00+00:00",
+    "league": "UEFA Euro",
+    "season": 2020,
+    "home_team": "Italy",
+    "away_team": "England",
+    "status": "FT",
+    "home_goals": 1,
+    "away_goals": 1,
+    "venue": "Wembley"
+  }
+]

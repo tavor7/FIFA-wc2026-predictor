@@ -6,12 +6,13 @@ import logging
 from typing import Any
 
 from src import db
+from src import db_extended as ext
 from src.api_client import APIClient
 from src.sync.sync_events import sync_events_for_match
 
 logger = logging.getLogger(__name__)
 
-LIVE_STATUSES = {"1H", "2H", "HT", "ET", "BT", "P", "LIVE", "IN_PLAY", "PAUSED"}
+from src.match_status import LIVE_STATUSES
 
 
 def _sync_fixture_details(client: APIClient, match_id: int, external_id: str) -> int:
@@ -43,6 +44,20 @@ def _sync_fixture_details(client: APIClient, match_id: int, external_id: str) ->
         events_written = sync_events_for_match(client, match_id, external_id)
     except Exception as exc:
         logger.warning("Event sync failed for live match %s: %s", external_id, exc)
+
+    try:
+        players_raw = client.get_fixture_players(external_id)
+        if players_raw:
+            ext.clear_player_match_stats(match_id)
+            for row in client.parse_fixture_players(players_raw):
+                ext.upsert_player_match_stat(
+                    match_id=match_id,
+                    team=row["team"],
+                    player_name=row["player_name"],
+                    stats=row,
+                )
+    except Exception as exc:
+        logger.warning("Player stats sync failed for match %s: %s", external_id, exc)
 
     return events_written
 

@@ -13,7 +13,7 @@ from src.sync_matches import _upsert_fixture
 logger = logging.getLogger(__name__)
 
 # Past World Cup seasons used to build empirical strength (not guesses).
-HISTORICAL_SEASONS = (2018, 2022)
+HISTORICAL_SEASONS = (2014, 2018, 2022)
 
 
 def _sync_api_football_season(client: APIClient, season: int) -> int:
@@ -71,7 +71,11 @@ def sync_historical_seasons(
     """
     client = client or APIClient()
     db.init_db()
-    total_synced = 0
+
+    from src.seed.historical_loader import load_historical_seeds
+
+    seed_result = load_historical_seeds()
+    total_synced = seed_result.get("matches", 0)
     by_season: dict[int, dict[str, int]] = {}
 
     for season in seasons:
@@ -86,6 +90,7 @@ def sync_historical_seasons(
 
     strength = recompute_and_persist()
     return {
+        "seeds": seed_result,
         "seasons": by_season,
         "total_synced": total_synced,
         "strength": strength,

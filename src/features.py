@@ -12,7 +12,6 @@ from src import config, db
 from src.analytics.injury_impact import estimate_team_injury_xg
 from src.analytics.momentum import MomentumEngine
 from src.analytics.team_form import TeamFormAnalyzer
-from src.models.elo import EloModel
 from src.team_profiles import (
     get_team_prior,
     get_team_prior_detail,
@@ -164,7 +163,27 @@ def _player_strength(
     )
 
 
-def _lineup_strength(match_id: int, team: str) -> tuple[float, bool]:
+def _fc26_expected_xi_strength(team: str) -> tuple[float, str]:
+    """Top-11 FC26 ratings as proxy lineup (low reliability)."""
+    from src import db_extended as dbx
+
+    team_row = dbx.get_team_by_name(team)
+    if not team_row:
+        return 0.55, "heuristic_default"
+    players = dbx.get_players_by_team_id(int(team_row["id"]))
+    if not players:
+        return 0.55, "heuristic_default"
+    top = sorted(players, key=lambda p: (p["rating"] or 0), reverse=True)[:11]
+    strengths = [
+        _player_strength(minutes=900, rating=(p["rating"] or 65) / 10.0, position=p["position"])
+        for p in top
+    ]
+    raw = float(np.mean(strengths))
+    capped = 0.55 + (raw - 0.55) * config.FC26_WEIGHT_CAP
+    return capped, "player_ratings_fc26"
+
+
+def _lineup_strength(match_id: int, team: str) -> tuple[float, bool, str]:
     """Average strength of confirmed/expected starting XI."""
     lineups = db.get_lineups(match_id)
     starters = [
@@ -180,9 +199,11 @@ def _lineup_strength(match_id: int, team: str) -> tuple[float, bool]:
             )
             for row in starters
         ]
-        return float(np.mean(strengths)), False
-    # No lineup: use default mid-strength
-    return 0.55, True
+        return float(np.mean(strengths)), False, "confirmed_lineup"
+    fc26_strength, source = _fc26_expected_xi_strength(team)
+    if source == "player_ratings_fc26":
+        return fc26_strength, True, source
+    return 0.55, True, "heuristic_default"
 
 
 def _injury_impact(team: str) -> tuple[int, float, bool]:
@@ -209,7 +230,7 @@ def _red_card_risk(team: str, before_date: str) -> tuple[float, bool]:
     return min(reds / len(recent), 1.0), False
 
 
-def build_features_for_match(match_row: Any) -> MatchFeatures:
+def build_features_for_match(match_row: Any, for_training: bool = False) -> MatchFeatures:
     """Build full feature set for a single match."""
     match_id = int(match_row["id"])
     home = normalize_team_name(match_row["home_team"])
@@ -218,6 +239,7 @@ def build_features_for_match(match_row: Any) -> MatchFeatures:
 
     mf = MatchFeatures(match_id=match_id, home_team=home, away_team=away)
     missing: dict[str, bool] = {}
+    meta_extra: dict[str, Any] = {}
 
     home_form_snap = _form_analyzer.compute(home, match_date)
     away_form_snap = _form_analyzer.compute(away, match_date)
@@ -228,6 +250,8 @@ def build_features_for_match(match_row: Any) -> MatchFeatures:
     prior_elo_diff = (home_atk + home_def) - (away_atk + away_def)
     finished_count = len(db.get_all_finished_matches())
     if finished_count >= 5:
+        from src.models.elo import EloModel
+
         elo_model = EloModel().get_or_fit()
         mf.features["elo_diff"] = (
             elo_model.get_rating(home) - elo_model.get_rating(away)
@@ -263,23 +287,40 @@ def build_features_for_match(match_row: Any) -> MatchFeatures:
     mf.features["rest_days_diff"] = rest_home - rest_away
     missing["rest_days_diff"] = miss_rh or miss_ra
 
-    inj_h_count, inj_h_score, miss_ih = _injury_impact(home)
-    inj_a_count, inj_a_score, miss_ia = _injury_impact(away)
-    mf.features["injured_players_home_count"] = float(inj_h_count)
-    mf.features["injured_players_away_count"] = float(inj_a_count)
-    mf.features["injured_key_players_home_score"] = inj_h_score
-    mf.features["injured_key_players_away_score"] = inj_a_score
-    missing["injured_players_home_count"] = miss_ih
-    missing["injured_players_away_count"] = miss_ia
-    missing["injured_key_players_home_score"] = miss_ih
-    missing["injured_key_players_away_score"] = miss_ia
+    if for_training:
+        mf.features["injured_players_home_count"] = 0.0
+        mf.features["injured_players_away_count"] = 0.0
+        mf.features["injured_key_players_home_score"] = 0.0
+        mf.features["injured_key_players_away_score"] = 0.0
+        missing["injured_players_home_count"] = True
+        missing["injured_players_away_count"] = True
+        missing["injured_key_players_home_score"] = True
+        missing["injured_key_players_away_score"] = True
+        meta_extra["injuries_home"] = 0
+        meta_extra["injuries_away"] = 0
+        meta_extra["injury_source"] = "excluded_for_training"
+    else:
+        inj_h_count, inj_h_score, miss_ih = _injury_impact(home)
+        inj_a_count, inj_a_score, miss_ia = _injury_impact(away)
+        mf.features["injured_players_home_count"] = float(inj_h_count)
+        mf.features["injured_players_away_count"] = float(inj_a_count)
+        mf.features["injured_key_players_home_score"] = inj_h_score
+        mf.features["injured_key_players_away_score"] = inj_a_score
+        missing["injured_players_home_count"] = miss_ih
+        missing["injured_players_away_count"] = miss_ia
+        missing["injured_key_players_home_score"] = miss_ih
+        missing["injured_key_players_away_score"] = miss_ia
+        meta_extra["injuries_home"] = inj_h_count
+        meta_extra["injuries_away"] = inj_a_count
 
-    xi_home, miss_xih = _lineup_strength(match_id, home)
-    xi_away, miss_xia = _lineup_strength(match_id, away)
+    xi_home, miss_xih, src_home = _lineup_strength(match_id, home)
+    xi_away, miss_xia, src_away = _lineup_strength(match_id, away)
     mf.features["starting_xi_strength_home"] = xi_home
     mf.features["starting_xi_strength_away"] = xi_away
     missing["starting_xi_strength_home"] = miss_xih
     missing["starting_xi_strength_away"] = miss_xia
+    mf.metadata["starting_xi_strength_home_source"] = src_home
+    mf.metadata["starting_xi_strength_away_source"] = src_away
 
     rc_home, miss_rc_h = _red_card_risk(home, match_date)
     rc_away, miss_rc_a = _red_card_risk(away, match_date)
@@ -292,7 +333,7 @@ def build_features_for_match(match_row: Any) -> MatchFeatures:
     mom_away = _momentum_engine.compute(away, match_date, match_id=match_id)
 
     mf.missing_flags = missing
-    mf.metadata = {
+    mf.metadata.update({
         "form_home": form_home,
         "form_away": form_away,
         "form_home_source": home_form_snap.source,
@@ -305,8 +346,6 @@ def build_features_for_match(match_row: Any) -> MatchFeatures:
         "home_form_away_split": home_form_snap.away_form,
         "away_form_home_split": away_form_snap.home_form,
         "away_form_away_split": away_form_snap.away_form,
-        "injuries_home": inj_h_count,
-        "injuries_away": inj_a_count,
         "momentum_home": mom_home.score,
         "momentum_away": mom_away.score,
         "momentum_home_detail": mom_home.to_dict(),
@@ -315,25 +354,32 @@ def build_features_for_match(match_row: Any) -> MatchFeatures:
         "team_form_away": away_form_snap.to_dict(),
         "strength_home": prior_metadata(home),
         "strength_away": prior_metadata(away),
-    }
+        "starting_xi_strength_home_source": src_home,
+        "starting_xi_strength_away_source": src_away,
+        **meta_extra,
+    })
     return mf
 
 
-def build_training_dataset() -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int]]:
+def build_training_dataset() -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int], list[float]]:
     """
     Build feature matrix and target vectors from finished matches.
-    Returns X, y_home, y_away, match_ids.
+    Returns X, y_home, y_away, match_ids, sample_weights.
     """
+    from src.services.feature_generation_service import FeatureGenerationService
+
     finished = db.get_all_finished_matches()
     if not finished:
-        return np.empty((0, len(MatchFeatures.feature_names()))), np.array([]), np.array([]), []
+        return np.empty((0, len(MatchFeatures.feature_names()))), np.array([]), np.array([]), [], []
 
-    X_rows, y_home, y_away, ids = [], [], [], []
+    svc = FeatureGenerationService()
+    X_rows, y_home, y_away, ids, weights = [], [], [], [], []
     for m in finished:
-        mf = build_features_for_match(m)
+        mf = svc.build(m, for_training=True)
         X_rows.append(mf.to_array())
         y_home.append(float(m["home_goals"]))
         y_away.append(float(m["away_goals"]))
         ids.append(int(m["id"]))
+        weights.append(float(m.get("competition_weight") or 1.0))
 
-    return np.array(X_rows), np.array(y_home), np.array(y_away), ids
+    return np.array(X_rows), np.array(y_home), np.array(y_away), ids, weights

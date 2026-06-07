@@ -85,14 +85,22 @@ export function outcomeBar(pred) {
 }
 
 export function confidenceBlock(pred) {
-  if (!pred?.confidence_pct && !pred?.model_agreement) return "";
+  if (!pred?.confidence_pct && !pred?.model_agreement && !pred?.generated_at) return "";
   const conf = pred.confidence_pct != null ? `${Math.round(pred.confidence_pct)}%` : "—";
   const data = pred.data_completeness_pct != null ? `${Math.round(pred.data_completeness_pct)}%` : "—";
   const agree = pred.model_agreement || "—";
+  const updated = pred.generated_at
+    ? `<div class="conf-row"><span>Last prediction update</span><strong>${formatDateIsrael(pred.generated_at)}</strong></div>`
+    : "";
+  const stale = pred.staleness_warnings?.length
+    ? `<div class="freshness-warn">${escapeHtml(pred.staleness_warnings[0])}</div>`
+    : "";
   return `<div class="confidence-block">
+    ${updated}
     <div class="conf-row"><span>Confidence</span><strong>${conf}</strong></div>
     <div class="conf-row"><span>Data completeness</span><strong>${data}</strong></div>
-    <div class="conf-row"><span>Model agreement</span><strong class="agree-${agree.toLowerCase()}">${agree}</strong></div>
+    <div class="conf-row"><span>Model agreement</span><strong class="agree-${String(agree).toLowerCase()}">${agree}</strong></div>
+    ${stale}
   </div>`;
 }
 
@@ -146,8 +154,8 @@ export function matchCardHtml(match, { clickable = true, linkPrefix = "#/match" 
   const live = isLive(match.status);
   const pred = match.prediction;
   const top = pred?.top_scorelines?.[0];
-  const pickHome = Math.round(pred?.predicted_home_goals ?? top?.home ?? 0);
-  const pickAway = Math.round(pred?.predicted_away_goals ?? top?.away ?? 0);
+  const pickHome = pred?.predicted_home_goals ?? top?.home ?? 0;
+  const pickAway = pred?.predicted_away_goals ?? top?.away ?? 0;
   const pickPct = top?.probability ?? 0;
   const hasScore = match.home_goals != null && match.away_goals != null;
   const center = hasScore ? `${match.home_goals}–${match.away_goals}` : `${pickHome}–${pickAway}`;

@@ -105,7 +105,6 @@ async function refreshData() {
   } catch {
     try {
       await request("/sync/matches", { method: "POST" });
-      await request("/predictions/generate", { method: "POST" }).catch(() => null);
       await navigate();
     } catch {
       showError("Sync failed — Render free tier may be cold-starting. Try again in a minute.");
@@ -118,9 +117,34 @@ async function refreshData() {
   }
 }
 
+async function adminRefreshPredictions() {
+  const btn = document.querySelector("#btn-admin-predict");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Refreshing predictions…";
+  }
+  try {
+    await request("/admin/predictions/refresh", { method: "POST" });
+    await navigate();
+  } catch (e) {
+    showError(e.message || "Prediction refresh failed");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Admin: refresh predictions";
+    }
+  }
+}
+
 window.addEventListener("hashchange", navigate);
 
 document.querySelector("#btn-refresh")?.addEventListener("click", refreshData);
+document.addEventListener("click", (e) => {
+  if (e.target.closest("#btn-admin-predict")) {
+    e.preventDefault();
+    adminRefreshPredictions();
+  }
+});
 
 document.querySelector("#disclaimer-toggle")?.addEventListener("click", () => {
   document.querySelector("#disclaimer-panel")?.classList.toggle("hidden");

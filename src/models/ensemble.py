@@ -45,6 +45,10 @@ class ModelPrediction:
 class EnsembleResult:
     lambda_home: float
     lambda_away: float
+    lambda_home_mean: float
+    lambda_home_std: float
+    lambda_away_mean: float
+    lambda_away_std: float
     home_win: float
     draw: float
     away_win: float
@@ -108,7 +112,7 @@ class EnsemblePredictor:
             return {"trained": False, "message": "xgboost not installed"}
         from src.features import build_training_dataset
 
-        X, y_home, y_away, _ = build_training_dataset()
+        X, y_home, y_away, _ids, _weights = build_training_dataset()
         if len(X) < min_samples:
             self._xgb_trained = False
             return {"trained": False, "samples": len(X)}
@@ -191,11 +195,31 @@ class EnsemblePredictor:
                 )
             )
 
-        lambda_home = sum(p.lambda_home * p.weight for p in preds)
-        lambda_away = sum(p.lambda_away * p.weight for p in preds)
+        lh_vals = np.array([p.lambda_home for p in preds])
+        la_vals = np.array([p.lambda_away for p in preds])
+        w_vals = np.array([p.weight for p in preds])
+        lambda_home_mean = float(np.average(lh_vals, weights=w_vals))
+        lambda_away_mean = float(np.average(la_vals, weights=w_vals))
+        lambda_home_std = float(np.std(lh_vals))
+        lambda_away_std = float(np.std(la_vals))
+
+        lambda_home = lambda_home_mean
+        lambda_away = lambda_away_mean
 
         home_imp = self.injury_engine.team_impact(match_features.home_team)
         away_imp = self.injury_engine.team_impact(match_features.away_team)
+        if self.goal_model.is_trained:
+            scale = 0.35
+            home_imp = {
+                **home_imp,
+                "attack_delta": home_imp.get("attack_delta", 0) * scale,
+                "defense_delta": home_imp.get("defense_delta", 0) * scale,
+            }
+            away_imp = {
+                **away_imp,
+                "attack_delta": away_imp.get("attack_delta", 0) * scale,
+                "defense_delta": away_imp.get("defense_delta", 0) * scale,
+            }
         lambda_home, lambda_away = self.injury_engine.adjust_lambdas(
             lambda_home, lambda_away, home_imp, away_imp
         )
@@ -207,6 +231,10 @@ class EnsemblePredictor:
         return EnsembleResult(
             lambda_home=round(lambda_home, 3),
             lambda_away=round(lambda_away, 3),
+            lambda_home_mean=round(lambda_home_mean, 3),
+            lambda_home_std=round(lambda_home_std, 3),
+            lambda_away_mean=round(lambda_away_mean, 3),
+            lambda_away_std=round(lambda_away_std, 3),
             home_win=round(home_win, 4),
             draw=round(draw, 4),
             away_win=round(away_win, 4),
