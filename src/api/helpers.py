@@ -42,6 +42,50 @@ def prediction_payload(pred: dict[str, Any] | None) -> dict[str, Any] | None:
     return p
 
 
+def _list_prediction_dict(p: dict[str, Any]) -> dict[str, Any]:
+    """Lightweight prediction for match cards — skips heavy ensemble JSON."""
+    top_raw = p.get("top_scorelines_json")
+    top_scorelines = json.loads(top_raw) if isinstance(top_raw, str) and top_raw else []
+    return {
+        "predicted_home_goals": p["predicted_home_goals"],
+        "predicted_away_goals": p["predicted_away_goals"],
+        "home_win_prob": p["home_win_prob"],
+        "draw_prob": p["draw_prob"],
+        "away_win_prob": p["away_win_prob"],
+        "exact_score_prob": p.get("exact_score_prob"),
+        "top_scorelines": top_scorelines,
+        "explanation": p.get("explanation"),
+        "generated_at": p.get("generated_at"),
+        "confidence_pct": p.get("confidence_pct"),
+        "data_completeness_pct": p.get("data_completeness_pct"),
+        "model_agreement": p.get("model_agreement"),
+        "lambda_home_mean": p.get("lambda_home_mean"),
+        "lambda_home_std": p.get("lambda_home_std"),
+        "lambda_away_mean": p.get("lambda_away_mean"),
+        "lambda_away_std": p.get("lambda_away_std"),
+        "prediction_type": p.get("prediction_type", "prematch"),
+        "staleness_warnings": [],
+    }
+
+
+def matches_with_predictions(rows: list) -> list[dict[str, Any]]:
+    """Attach stored predictions in one batch query (for list endpoints)."""
+    match_rows = [row_to_dict(r) for r in rows if r]
+    if not match_rows:
+        return []
+    ids = [int(m["id"]) for m in match_rows]
+    pred_map = {mid: dict(r) for mid, r in db.get_predictions_for_match_ids(ids).items()}
+    out: list[dict[str, Any]] = []
+    for m in match_rows:
+        pred = pred_map.get(int(m["id"]))
+        if pred:
+            m["prediction"] = _list_prediction_dict(pred)
+        m["home"] = team_meta(m["home_team"])
+        m["away"] = team_meta(m["away_team"])
+        out.append(m)
+    return out
+
+
 def match_with_prediction(row) -> dict[str, Any]:
     m = row_to_dict(row)
     if not m:

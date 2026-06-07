@@ -81,7 +81,7 @@ async function navigate() {
   content.innerHTML = "";
   try {
     content.innerHTML = await handler(match);
-    updateFreshnessBar();
+    void updateFreshnessBar();
   } catch (e) {
     showError(e.message || "Failed to load page");
     content.innerHTML = "";

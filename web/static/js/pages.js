@@ -46,7 +46,6 @@ export async function pageMatches() {
 }
 
 export async function pageLive() {
-  await request("/sync/live", { method: "POST" }).catch(() => null);
   const matches = await request("/matches/live");
   return disclaimerHtml() +
     (matches.length
@@ -306,7 +305,7 @@ export async function pageReports() {
     request("/reports/summary"),
     request("/meta/freshness").catch(() => null),
     request("/evaluation/calibration").catch(() => null),
-    request("/evaluation/backtest").catch(() => null),
+    request("/evaluation/backtest/latest").catch(() => null),
   ]);
 
   const momHigh = (report.most_momentum || []).map(

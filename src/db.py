@@ -906,47 +906,60 @@ def get_match_by_external_id(external_id: str) -> Optional[Row]:
         ).fetchone()
 
 
-def get_matches_by_status(statuses: list[str]) -> list[Row]:
+def get_matches_by_status(statuses: list[str], tournament_only: bool = False) -> list[Row]:
     placeholders = ",".join("?" * len(statuses))
+    wc_clause = " AND LOWER(league) LIKE '%world cup%' AND season = ?" if tournament_only else ""
+    params: list[Any] = list(statuses)
+    if tournament_only:
+        params.append(config.SEASON)
     with get_connection() as conn:
         return _execute(
             conn,
-            f"SELECT * FROM matches WHERE status IN ({placeholders}) ORDER BY date",
-            statuses,
+            f"SELECT * FROM matches WHERE status IN ({placeholders}){wc_clause} ORDER BY date",
+            params,
         ).fetchall()
 
 
-def get_upcoming_matches(limit: int = 50) -> list[Row]:
+def get_upcoming_matches(limit: int = 50, tournament_only: bool = True) -> list[Row]:
+    wc_clause = " AND LOWER(league) LIKE '%world cup%' AND season = ?" if tournament_only else ""
+    params: list[Any] = [config.SEASON, limit] if tournament_only else [limit]
     with get_connection() as conn:
         return _execute(
             conn,
-            """
+            f"""
             SELECT * FROM matches
-            WHERE status IN ('NS', 'TBD', 'SCHEDULED', 'TIMED', 'Not Started')
-               OR (status NOT IN ('FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO')
-                   AND home_goals IS NULL)
+            WHERE (
+                status IN ('NS', 'TBD', 'SCHEDULED', 'TIMED', 'Not Started')
+                OR (status NOT IN ('FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO')
+                    AND home_goals IS NULL)
+            ){wc_clause}
             ORDER BY date ASC
             LIMIT ?
             """,
-            (limit,),
+            params,
         ).fetchall()
 
 
-def get_live_matches() -> list[Row]:
-    return get_matches_by_status(["1H", "2H", "HT", "ET", "BT", "P", "LIVE", "IN_PLAY", "PAUSED"])
+def get_live_matches(tournament_only: bool = True) -> list[Row]:
+    return get_matches_by_status(
+        ["1H", "2H", "HT", "ET", "BT", "P", "LIVE", "IN_PLAY", "PAUSED"],
+        tournament_only=tournament_only,
+    )
 
 
-def get_recent_matches(limit: int = 50) -> list[Row]:
+def get_recent_matches(limit: int = 50, tournament_only: bool = True) -> list[Row]:
+    wc_clause = " AND LOWER(league) LIKE '%world cup%' AND season = ?" if tournament_only else ""
+    params: list[Any] = [config.SEASON, limit] if tournament_only else [limit]
     with get_connection() as conn:
         return _execute(
             conn,
-            """
+            f"""
             SELECT * FROM matches
-            WHERE status IN ('FT', 'AET', 'PEN', 'FINISHED')
+            WHERE status IN ('FT', 'AET', 'PEN', 'FINISHED'){wc_clause}
             ORDER BY date DESC
             LIMIT ?
             """,
-            (limit,),
+            params,
         ).fetchall()
 
 
@@ -966,6 +979,54 @@ def get_all_finished_matches() -> list[Row]:
 def get_prediction(match_id: int) -> Optional[Row]:
     with get_connection() as conn:
         return _execute(conn, "SELECT * FROM predictions WHERE match_id = ?", (match_id,)).fetchone()
+
+
+def get_predictions_for_match_ids(match_ids: list[int]) -> dict[int, Row]:
+    """Batch-load predictions for list endpoints (one query instead of N)."""
+    if not match_ids:
+        return {}
+    placeholders = ",".join("?" * len(match_ids))
+    with get_connection() as conn:
+        rows = _execute(
+            conn,
+            f"SELECT * FROM predictions WHERE match_id IN ({placeholders})",
+            match_ids,
+        ).fetchall()
+    return {int(dict(r)["match_id"]): r for r in rows}
+
+
+def get_platform_stats(tournament_only: bool = True) -> dict[str, int]:
+    """Fast counts for dashboard — read-only, no computation."""
+    wc = " AND LOWER(league) LIKE '%world cup%' AND season = ?" if tournament_only else ""
+    season = [config.SEASON] if tournament_only else []
+    live_statuses = ("1H", "2H", "HT", "ET", "BT", "P", "LIVE", "IN_PLAY", "PAUSED")
+    live_ph = ",".join("?" * len(live_statuses))
+    with get_connection() as conn:
+        upcoming = _execute(
+            conn,
+            f"""
+            SELECT COUNT(*) AS n FROM matches
+            WHERE (
+                status IN ('NS', 'TBD', 'SCHEDULED', 'TIMED', 'Not Started')
+                OR (status NOT IN ('FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO')
+                    AND home_goals IS NULL)
+            ){wc}
+            """,
+            season,
+        ).fetchone()
+        live = _execute(
+            conn,
+            f"SELECT COUNT(*) AS n FROM matches WHERE status IN ({live_ph}){wc}",
+            list(live_statuses) + season,
+        ).fetchone()
+        preds = _execute(conn, "SELECT COUNT(*) AS n FROM predictions", ()).fetchone()
+        teams = _execute(conn, "SELECT COUNT(*) AS n FROM teams", ()).fetchone()
+    return {
+        "upcoming": int(dict(upcoming)["n"]),
+        "live": int(dict(live)["n"]),
+        "predictions": int(dict(preds)["n"]),
+        "teams": int(dict(teams)["n"]),
+    }
 
 
 def get_all_predictions() -> list[Row]:

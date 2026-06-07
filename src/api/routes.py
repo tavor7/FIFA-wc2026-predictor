@@ -14,7 +14,7 @@ from src import db
 from src import db_extended as ext
 from src.analytics.momentum import MomentumEngine
 from src.analytics.team_form import TeamFormAnalyzer
-from src.api.helpers import match_with_prediction, row_to_dict, team_meta
+from src.api.helpers import match_with_prediction, matches_with_predictions, row_to_dict, team_meta
 from src.db import db_backend
 from src.services.data_sync_service import DataSyncService
 from src.services.model_training_service import ModelTrainingService
@@ -85,12 +85,22 @@ def freshness() -> dict[str, Any]:
 
 @router.get("/stats")
 def stats() -> dict[str, int]:
-    return {
-        "upcoming": len(db.get_upcoming_matches(limit=200)),
-        "live": len(db.get_live_matches()),
-        "predictions": len(db.get_all_predictions()),
-        "teams": len(ext.get_all_teams()),
-    }
+    return db.get_platform_stats(tournament_only=True)
+
+
+@router.get("/matches/upcoming")
+def upcoming_matches(limit: int = 72) -> list[dict[str, Any]]:
+    return matches_with_predictions(db.get_upcoming_matches(limit=limit, tournament_only=True))
+
+
+@router.get("/matches/live")
+def live_matches() -> list[dict[str, Any]]:
+    return matches_with_predictions(db.get_live_matches(tournament_only=True))
+
+
+@router.get("/matches/recent")
+def recent_matches(limit: int = 40) -> list[dict[str, Any]]:
+    return matches_with_predictions(db.get_recent_matches(limit=limit, tournament_only=True))
 
 
 @router.get("/teams")
@@ -165,21 +175,6 @@ def team_history(slug: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Team not found")
     hist = ext.get_team_history(team["name"])
     return {"team": row_to_dict(team), "history": row_to_dict(hist) if hist else {}}
-
-
-@router.get("/matches/upcoming")
-def upcoming_matches() -> list[dict[str, Any]]:
-    return [match_with_prediction(m) for m in db.get_upcoming_matches(limit=100)]
-
-
-@router.get("/matches/live")
-def live_matches() -> list[dict[str, Any]]:
-    return [match_with_prediction(m) for m in db.get_live_matches()]
-
-
-@router.get("/matches/recent")
-def recent_matches(limit: int = 40) -> list[dict[str, Any]]:
-    return [match_with_prediction(m) for m in db.get_recent_matches(limit=limit)]
 
 
 @router.get("/matches/{match_id}/live-probs")
@@ -428,14 +423,31 @@ def retrain() -> dict[str, Any]:
 
 
 @router.get("/evaluation/calibration")
-def evaluation_calibration(limit: int = 200) -> dict[str, Any]:
+def evaluation_calibration(limit: int = 50) -> dict[str, Any]:
     from src.evaluation.calibration import evaluate_stored_predictions
 
     return evaluate_stored_predictions(limit=limit)
 
 
+@router.get("/evaluation/backtest/latest")
+def evaluation_backtest_latest() -> dict[str, Any]:
+    """Return last stored backtest run — no live computation."""
+    row = ext.get_latest_backtest_run()
+    if not row:
+        return {"matches": 0, "message": "No backtest run yet. POST /model/retrain to generate one."}
+    data = dict(row)
+    metrics = data.get("metrics_json")
+    if isinstance(metrics, str):
+        try:
+            metrics = json.loads(metrics)
+        except json.JSONDecodeError:
+            metrics = {}
+    return metrics or {}
+
+
 @router.get("/evaluation/backtest")
 def evaluation_backtest(league: str = "World Cup", limit: int = 500) -> dict[str, Any]:
+    """On-demand backtest (slow — admin/research only)."""
     from src.evaluation.backtest import backtest_tournament
 
     return backtest_tournament(league_filter=league, limit=limit)
