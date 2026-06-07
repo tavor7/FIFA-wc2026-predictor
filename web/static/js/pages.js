@@ -7,7 +7,32 @@ import {
   factorChartHtml, renderFactorChart, simChartHtml, renderSimChart,
   liveProbChartHtml, renderLiveProbChart,
   formatDate,
+  formatDateIsrael,
+  formatPct,
+  formatAvg,
 } from "./components.js";
+
+function regionalBadge(form) {
+  const boost = formatPct(form.regional_boost ?? form.host_region_boost);
+  if (form.regional_advantage === "co_host") {
+    return `<span class="metric-badge">2026 co-host · +${boost} boost</span>`;
+  }
+  if (form.regional_advantage === "south_america") {
+    return `<span class="metric-badge">South America · +${boost} boost</span>`;
+  }
+  return "";
+}
+
+function regionalVenueCard(form) {
+  const boost = formatPct(form.regional_boost ?? form.host_region_boost);
+  if (form.regional_advantage === "co_host") {
+    return `<div class="form-card"><span>2026 co-host</span><strong>+${boost} region</strong></div>`;
+  }
+  if (form.regional_advantage === "south_america") {
+    return `<div class="form-card"><span>South America</span><strong>+${boost} Americas</strong></div>`;
+  }
+  return `<div class="form-card"><span>Venue</span><strong>Neutral site</strong></div>`;
+}
 
 export async function pageMatches() {
   const [matches, stats] = await Promise.all([
@@ -49,8 +74,9 @@ export async function pageTeam(slug) {
       <h2>${escapeHtml(t.name)}</h2>
       <div class="badges-row">
         <span class="metric-badge">Momentum ${Math.round(mom.score ?? 0)}</span>
-        ${form.form_last_5 != null ? `<span class="metric-badge">L5 form ${(form.form_last_5 * 100).toFixed(0)}%</span>` : ""}
-        ${form.opponent_adjusted_form != null ? `<span class="metric-badge">Adj form ${(form.opponent_adjusted_form * 100).toFixed(0)}%</span>` : ""}
+        ${form.form_last_5 != null ? `<span class="metric-badge">L5 form ${formatPct(form.form_last_5)}</span>` : ""}
+        ${form.opponent_adjusted_form != null ? `<span class="metric-badge">Adj form ${formatPct(form.opponent_adjusted_form)}</span>` : ""}
+        ${regionalBadge(form)}
         ${form.source ? `<span class="metric-badge">${escapeHtml(form.source)}</span>` : ""}
         ${data.strength?.matches ? `<span class="metric-badge">${data.strength.matches} WC matches · atk ${data.strength.attack?.toFixed(2)}</span>` : ""}
       </div>
@@ -60,13 +86,17 @@ export async function pageTeam(slug) {
   const players = data.players || [];
   const injuries = data.injuries || [];
 
-  const formSection = section("Recent form", `<div class="form-grid">
-    <div class="form-card"><span>L5 form</span><strong>${form.form_last_5 != null ? (form.form_last_5 * 100).toFixed(0) + "%" : "—"}</strong></div>
-    <div class="form-card"><span>L10 form</span><strong>${form.form_last_10 != null ? (form.form_last_10 * 100).toFixed(0) + "%" : "—"}</strong></div>
-    <div class="form-card"><span>Goals L5</span><strong>${form.goals_scored_last_5 != null ? `${form.goals_scored_last_5}–${form.goals_conceded_last_5}` : "—"}</strong></div>
+  const venueCard = regionalVenueCard(form);
+
+  const formSection = section("Recent form", `<p class="section-note">World Cup matches are neutral-site — no traditional home advantage. Co-hosts and South American teams get a small Americas familiarity boost.</p>
+  <div class="form-grid form-grid--stats">
+    <div class="form-card"><span>L5 form</span><strong>${formatPct(form.form_last_5)}</strong></div>
+    <div class="form-card"><span>L10 form</span><strong>${formatPct(form.form_last_10)}</strong></div>
+    <div class="form-card"><span>Opp-adjusted</span><strong>${formatPct(form.opponent_adjusted_form)}</strong></div>
+    <div class="form-card"><span>Goals L5 avg</span><strong>${form.goals_scored_last_5 != null ? `${formatAvg(form.goals_scored_last_5)}–${formatAvg(form.goals_conceded_last_5)}` : "—"}</strong></div>
+    <div class="form-card"><span>Goals L10 avg</span><strong>${form.goals_scored_last_10 != null ? `${formatAvg(form.goals_scored_last_10)}–${formatAvg(form.goals_conceded_last_10)}` : "—"}</strong></div>
     <div class="form-card"><span>Clean sheets L5</span><strong>${form.clean_sheets_last_5 ?? "—"}</strong></div>
-    <div class="form-card"><span>Home form</span><strong>${form.home_form != null ? (form.home_form * 100).toFixed(0) + "%" : "—"}</strong></div>
-    <div class="form-card"><span>Away form</span><strong>${form.away_form != null ? (form.away_form * 100).toFixed(0) + "%" : "—"}</strong></div>
+    ${venueCard}
   </div>`);
 
   const squadRows = players
@@ -294,7 +324,7 @@ export async function pageMonitor() {
       <td>${escapeHtml(j.job_name || j.job || "—")}</td>
       <td><span class="status-${(j.status || "").toLowerCase()}">${escapeHtml(j.status || "—")}</span></td>
       <td>${j.records_processed ?? j.records ?? "—"}</td>
-      <td>${formatDate(j.finished_at || j.started_at || "")}</td>
+      <td>${formatDateIsrael(j.finished_at || j.started_at || "")}</td>
     </tr>`
   );
 
@@ -303,7 +333,7 @@ export async function pageMonitor() {
       <td>${escapeHtml(e.entity || "—")}</td>
       <td>${Math.round(e.completeness_pct || 0)}%</td>
       <td>${escapeHtml(e.source || "—")}</td>
-      <td>${formatDate(e.last_updated || "")}</td>
+      <td>${formatDateIsrael(e.last_updated || "")}</td>
     </tr>`
   );
 
@@ -326,6 +356,6 @@ export async function pageMonitor() {
     (hints ? section("Next steps", `<ul>${hints}</ul>`) : "") +
     section("Table rows", tableHtml(["Table", "Rows"], countRows.length ? countRows : [`<tr><td colspan="2">No counts</td></tr>`])) +
     section("Stats", statsHtml(status.stats || {})) +
-    section("Recent sync jobs", tableHtml(["Job", "Status", "Records", "Finished"], jobs.length ? jobs : [`<tr><td colspan="4">No jobs logged yet</td></tr>`])) +
-    section("Data freshness", tableHtml(["Entity", "Complete", "Source", "Updated"], entities.length ? entities : [`<tr><td colspan="4">No freshness data</td></tr>`]));
+    section("Recent sync jobs", tableHtml(["Job", "Status", "Records", "Finished (Israel)"], jobs.length ? jobs : [`<tr><td colspan="4">No jobs logged yet</td></tr>`])) +
+    section("Data freshness", tableHtml(["Entity", "Complete", "Source", "Updated (Israel)"], entities.length ? entities : [`<tr><td colspan="4">No freshness data</td></tr>`]));
 }

@@ -60,7 +60,12 @@ XGB_AWAY_MODEL_PATH: Path = MODEL_DIR / "xgb_away_model.joblib"
 DEFAULT_ELO: float = 1500.0
 DEFAULT_FORM: float = 0.5
 DEFAULT_GOALS: float = 1.2
-HOME_ADVANTAGE: float = 0.15
+HOME_ADVANTAGE: float = float(_env("HOME_ADVANTAGE", "0"))
+# Small boost for USA / Mexico / Canada co-hosts at WC 2026 (neutral venues)
+HOST_REGION_BOOST: float = float(_env("HOST_REGION_BOOST", "0.05"))
+# South American teams — same small Americas familiarity boost
+SOUTH_AMERICA_BOOST: float = float(_env("SOUTH_AMERICA_BOOST", "0.05"))
+ELO_HOST_BOOST_POINTS: float = float(_env("ELO_HOST_BOOST_POINTS", "35"))
 
 # Position importance weights for player strength
 POSITION_IMPORTANCE: dict[str, float] = {

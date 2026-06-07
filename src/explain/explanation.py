@@ -107,8 +107,15 @@ def generate_explanation(
     if rest:
         reasons.append(rest)
 
-    if f.get("home_advantage", 0) > 0:
-        reasons.append(f"{home_team} benefits from a home-advantage adjustment")
+    adv = f.get("home_advantage", 0)
+    if adv > 0.01:
+        reasons.append(
+            f"{home_team} gets a small regional boost for 2026 venues in the Americas"
+        )
+    elif adv < -0.01:
+        reasons.append(
+            f"{away_team} gets a small regional boost for 2026 venues in the Americas"
+        )
 
     if outcomes.get("draw", 0) > 0.28:
         reasons.append("a draw remains a plausible outcome based on balanced probabilities")

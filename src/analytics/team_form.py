@@ -28,7 +28,23 @@ class TeamFormSnapshot:
     source: str  # "computed" | "prior"
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        from src.tournament import host_region_boost, regional_advantage_type
+
+        d = asdict(self)
+        for key in (
+            "goals_scored_last_5",
+            "goals_conceded_last_5",
+            "goals_scored_last_10",
+            "goals_conceded_last_10",
+        ):
+            if d.get(key) is not None:
+                d[key] = round(float(d[key]), 2)
+        adv = regional_advantage_type(self.team)
+        d["regional_advantage"] = adv
+        d["regional_boost"] = host_region_boost(self.team)
+        d["host_region"] = adv is not None
+        d["host_region_boost"] = d["regional_boost"]
+        return d
 
 
 def _match_points(team: str, match_row: Any) -> float:

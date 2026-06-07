@@ -4,13 +4,53 @@ export const LIVE_STATUSES = new Set([
   "1H", "2H", "HT", "ET", "BT", "P", "LIVE", "IN_PLAY", "PAUSED",
 ]);
 
+export function parseUtcIso(iso) {
+  if (!iso) return null;
+  const s = String(iso).trim();
+  if (!s) return null;
+  // Server stores UTC without a Z suffix — treat naive ISO as UTC.
+  const normalized = /[Zz]$|[+-]\d{2}:\d{2}$/.test(s) ? s : `${s}Z`;
+  const d = new Date(normalized);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 export function formatDate(iso) {
   try {
-    return new Date(iso).toLocaleString("en-US", {
+    const d = parseUtcIso(iso);
+    if (!d) return iso;
+    return d.toLocaleString("en-US", {
       month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
     });
   } catch {
     return iso;
+  }
+}
+
+export function formatPct(value) {
+  if (value == null || Number.isNaN(Number(value))) return "—";
+  return `${(Number(value) * 100).toFixed(0)}%`;
+}
+
+export function formatAvg(value) {
+  if (value == null || Number.isNaN(Number(value))) return "—";
+  return Number(value).toFixed(2);
+}
+
+/** Monitor / admin timestamps — always Israel (Asia/Jerusalem). */
+export function formatDateIsrael(iso) {
+  try {
+    const d = parseUtcIso(iso);
+    if (!d) return iso || "—";
+    return d.toLocaleString("en-IL", {
+      timeZone: "Asia/Jerusalem",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return iso || "—";
   }
 }
 

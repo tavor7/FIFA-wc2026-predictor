@@ -20,6 +20,7 @@ from src.team_profiles import (
     prior_metadata,
     prior_to_goal_rates,
 )
+from src.tournament import match_venue_advantage
 
 FEATURE_COLUMNS = [
     "elo_diff",
@@ -254,7 +255,7 @@ def build_features_for_match(match_row: Any) -> MatchFeatures:
     missing["avg_goals_conceded_home_last_5"] = miss_hc
     missing["avg_goals_conceded_away_last_5"] = miss_ac
 
-    mf.features["home_advantage"] = config.HOME_ADVANTAGE
+    mf.features["home_advantage"] = match_venue_advantage(home, away)
     missing["home_advantage"] = False
 
     rest_home, miss_rh = _compute_rest_days(home, match_date)

@@ -117,7 +117,7 @@ class GoalPredictionModel:
         f = mf.features
         ha = f.get("home_advantage", config.HOME_ADVANTAGE)
 
-        # Attack vs defense blend with home advantage
+        # Neutral-site WC: only co-host region boost (see src.tournament)
         home_lambda = (h_sc + a_con) / 2 * (1.0 + ha)
         away_lambda = (a_sc + h_con) / 2 * (1.0 - ha * 0.35)
 

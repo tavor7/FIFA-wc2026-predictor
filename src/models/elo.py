@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from src import config, db
 from src.team_profiles import get_team_prior, normalize_team_name
+from src.tournament import match_venue_advantage, max_regional_boost
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ class EloModel:
     def __init__(
         self,
         k_factor: float = 32.0,
-        home_advantage: float = 100.0,
+        home_advantage: float = 0.0,
         initial_rating: float = None,
     ):
         self.k_factor = k_factor
@@ -48,7 +49,13 @@ class EloModel:
         """Return outcome probabilities and implied expected goals."""
         home = normalize_team_name(home_team)
         away = normalize_team_name(away_team)
-        home_r = self.get_rating(home) + (self.home_advantage if apply_home_advantage else 0)
+        if apply_home_advantage:
+            host_pts = match_venue_advantage(home, away) * (
+                config.ELO_HOST_BOOST_POINTS / max_regional_boost()
+            )
+            home_r = self.get_rating(home) + host_pts
+        else:
+            home_r = self.get_rating(home)
         away_r = self.get_rating(away)
 
         home_win = self._expected_score(home_r, away_r)
@@ -94,7 +101,12 @@ class EloModel:
         else:
             actual_home, actual_away = 0.5, 0.5
 
-        exp_home = self._expected_score(home_r + self.home_advantage, away_r)
+        exp_home = self._expected_score(
+            home_r + match_venue_advantage(home, away) * (
+                config.ELO_HOST_BOOST_POINTS / max_regional_boost()
+            ),
+            away_r,
+        )
         exp_away = 1.0 - exp_home
 
         self.ratings[home] = home_r + self.k_factor * (actual_home - exp_home)
