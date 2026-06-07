@@ -65,8 +65,8 @@ function matchCardHtml(match, { clickable = true } = {}) {
   const live = isLive(match.status);
   const pred = match.prediction;
   const top = pred?.top_scorelines?.[0];
-  const pickHome = top?.home ?? Math.round(pred?.predicted_home_goals ?? 0);
-  const pickAway = top?.away ?? Math.round(pred?.predicted_away_goals ?? 0);
+  const pickHome = Math.round(pred?.predicted_home_goals ?? top?.home ?? 0);
+  const pickAway = Math.round(pred?.predicted_away_goals ?? top?.away ?? 0);
   const pickPct = top?.probability ?? 0;
   const hasScore = match.home_goals != null && match.away_goals != null;
   const center = hasScore
@@ -77,10 +77,12 @@ function matchCardHtml(match, { clickable = true } = {}) {
     ? `<span class="badge-live">● LIVE</span>`
     : `<span class="badge-upcoming">UPCOMING</span>`;
 
-  const conf =
-    !hasScore && pickPct > 0
-      ? `<div class="conf">${(pickPct * 100).toFixed(0)}% likely</div>`
-      : "";
+  const exactScore =
+    !hasScore && top && (top.home !== pickHome || top.away !== pickAway)
+      ? `<div class="conf">Exact ${top.home}–${top.away}: ${(top.probability * 100).toFixed(0)}%</div>`
+      : !hasScore && pickPct > 0
+        ? `<div class="conf">${(pickPct * 100).toFixed(0)}% likely</div>`
+        : "";
 
   const attrs = clickable
     ? `class="card${live ? " live" : ""}" data-id="${match.id}" role="button" tabindex="0"`
@@ -93,7 +95,7 @@ function matchCardHtml(match, { clickable = true } = {}) {
       <div class="score-block">
         <div class="score">${center}</div>
         <div class="pick-label">${hasScore ? "Score" : "Pick"}</div>
-        ${conf}
+        ${exactScore}
       </div>
       <div class="team away">${escapeHtml(match.away_team)}</div>
     </div>

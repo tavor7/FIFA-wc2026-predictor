@@ -106,26 +106,30 @@ class GoalPredictionModel:
 
     @staticmethod
     def _heuristic_expected_goals(mf: MatchFeatures) -> tuple[float, float]:
-        """Simple heuristic when ML model is unavailable."""
+        """Team-strength based expected goals when ML model is unavailable."""
+        from src.team_profiles import get_team_prior, prior_to_goal_rates
+
+        home_atk, home_def = get_team_prior(mf.home_team)
+        away_atk, away_def = get_team_prior(mf.away_team)
+        h_sc, h_con = prior_to_goal_rates(home_atk, home_def)
+        a_sc, a_con = prior_to_goal_rates(away_atk, away_def)
+
         f = mf.features
-        home_lambda = (
-            0.30 * f.get("avg_goals_scored_home_last_5", config.DEFAULT_GOALS)
-            + 0.22 * (1.0 - f.get("avg_goals_conceded_away_last_5", config.DEFAULT_GOALS) / 3)
-            + 0.15 * f.get("recent_form_home", config.DEFAULT_FORM)
-            + 0.10 * f.get("starting_xi_strength_home", 0.55)
-            + 0.10 * f.get("home_advantage", config.HOME_ADVANTAGE)
-            + 0.08 * max(f.get("elo_diff", 0), 0)
-            - 0.05 * f.get("injured_key_players_home_score", 0)
-        )
-        away_lambda = (
-            0.30 * f.get("avg_goals_scored_away_last_5", config.DEFAULT_GOALS)
-            + 0.22 * (1.0 - f.get("avg_goals_conceded_home_last_5", config.DEFAULT_GOALS) / 3)
-            + 0.15 * f.get("recent_form_away", config.DEFAULT_FORM)
-            + 0.10 * f.get("starting_xi_strength_away", 0.55)
-            + 0.08 * max(-f.get("elo_diff", 0), 0)
-            - 0.05 * f.get("injured_key_players_away_score", 0)
-        )
-        return max(home_lambda, 0.35), max(away_lambda, 0.35)
+        ha = f.get("home_advantage", config.HOME_ADVANTAGE)
+
+        # Attack vs defense blend with home advantage
+        home_lambda = (h_sc + a_con) / 2 * (1.0 + ha)
+        away_lambda = (a_sc + h_con) / 2 * (1.0 - ha * 0.35)
+
+        # Form and strength nudges from features
+        home_lambda += 0.35 * (f.get("recent_form_home", config.DEFAULT_FORM) - 0.5)
+        away_lambda += 0.35 * (f.get("recent_form_away", config.DEFAULT_FORM) - 0.5)
+        home_lambda += 0.20 * max(f.get("elo_diff", 0), 0)
+        away_lambda += 0.20 * max(-f.get("elo_diff", 0), 0)
+        home_lambda -= 0.08 * f.get("injured_key_players_home_score", 0)
+        away_lambda -= 0.08 * f.get("injured_key_players_away_score", 0)
+
+        return max(home_lambda, 0.65), max(away_lambda, 0.65)
 
     @staticmethod
     def scoreline_distribution(

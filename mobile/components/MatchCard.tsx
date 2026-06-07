@@ -15,10 +15,11 @@ export function MatchCard({ match, onPress }: Props) {
   const live = isLive(match.status);
   const pred = match.prediction;
   const top = pred?.top_scorelines?.[0];
-
-  const pickHome = top?.home ?? Math.round(pred?.predicted_home_goals ?? 0);
-  const pickAway = top?.away ?? Math.round(pred?.predicted_away_goals ?? 0);
+  const pickHome = Math.round(pred?.predicted_home_goals ?? top?.home ?? 0);
+  const pickAway = Math.round(pred?.predicted_away_goals ?? top?.away ?? 0);
   const pickPct = top?.probability ?? 0;
+  const exactDiffers =
+    top && (top.home !== pickHome || top.away !== pickAway);
 
   const hasScore = match.home_goals != null && match.away_goals != null;
   const center = hasScore
@@ -51,7 +52,12 @@ export function MatchCard({ match, onPress }: Props) {
         <View style={styles.center}>
           <Text style={styles.score}>{center}</Text>
           <Text style={styles.pickLabel}>{hasScore ? "Score" : "Pick"}</Text>
-          {!hasScore && pickPct > 0 && (
+          {!hasScore && exactDiffers && top && (
+            <Text style={styles.conf}>
+              Exact {top.home}–{top.away}: {(top.probability * 100).toFixed(0)}%
+            </Text>
+          )}
+          {!hasScore && !exactDiffers && pickPct > 0 && (
             <Text style={styles.conf}>{(pickPct * 100).toFixed(0)}% likely</Text>
           )}
         </View>
