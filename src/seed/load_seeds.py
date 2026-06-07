@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from src import config, db
+from src.db import _execute
 from src import db_extended as dbx
 from src.analytics.computed_strength import recompute_and_persist
 from src.sync_matches import _upsert_fixture
@@ -42,11 +43,11 @@ def _load_json(name: str) -> Any:
 def _safe_upsert_team(name: str, api_id: Optional[int] = None) -> None:
     slug = slugify(name)
     with db.get_connection() as conn:
-        if conn.execute("SELECT 1 FROM teams WHERE name = ?", (name,)).fetchone():
+        if _execute(conn, "SELECT 1 FROM teams WHERE name = ?", (name,)).fetchone():
             return
-        if conn.execute("SELECT 1 FROM teams WHERE slug = ?", (slug,)).fetchone():
+        if _execute(conn, "SELECT 1 FROM teams WHERE slug = ?", (slug,)).fetchone():
             return
-        if api_id and conn.execute("SELECT 1 FROM teams WHERE api_team_id = ?", (api_id,)).fetchone():
+        if api_id and _execute(conn, "SELECT 1 FROM teams WHERE api_team_id = ?", (api_id,)).fetchone():
             api_id = None
     try:
         dbx.upsert_team(
@@ -179,7 +180,7 @@ def table_counts() -> dict[str, int]:
     with db.get_connection() as conn:
         for table in tables:
             try:
-                row = conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()
+                row = _execute(conn, f"SELECT COUNT(*) AS c FROM {table}").fetchone()
                 counts[table] = int(dict(row)["c"])
             except Exception:
                 counts[table] = -1
