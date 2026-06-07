@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WC 2026 Predictor — Amit Tavor</title>
+    <title>WC 2026 Research Platform — Amit Tavor</title>
     <meta
       name="description"
-      content="FIFA World Cup 2026 research predictions. Educational use only."
+      content="FIFA World Cup 2026 research recommendation system. Educational use only."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -18,31 +18,55 @@
   </head>
   <body>
     <div class="page-bg" aria-hidden="true"></div>
+
+    <div id="credit-banner" class="credit-banner" role="banner">
+      <div class="credit-inner">
+        <div class="credit-text">
+          <strong>Created by Amit Tavor</strong>
+          <span class="credit-sep">·</span>
+          <span>Research Recommendation System</span>
+        </div>
+        <button id="disclaimer-toggle" class="disclaimer-link" type="button" title="Disclaimer">
+          Research only — not betting advice
+        </button>
+      </div>
+      <div id="disclaimer-panel" class="disclaimer-panel hidden">
+        For educational and research purposes only. Not betting or financial advice.
+        Not affiliated with FIFA. Predictions are estimates, not guarantees.
+      </div>
+    </div>
+
     <div id="app">
       <header class="header">
         <div class="header-top">
           <div class="brand">
             <div class="brand-icon" aria-hidden="true">⚽</div>
             <div>
-              <p class="eyebrow">Research only · Not betting advice</p>
-              <h1>WC 2026 Predictor</h1>
+              <p class="eyebrow">WC 2026 · Ensemble predictions</p>
+              <h1>Research Platform</h1>
             </div>
           </div>
           <button id="btn-refresh" class="btn-primary" type="button">
-            <span class="btn-icon">↻</span> Refresh data
+            <span class="btn-icon">↻</span> Sync data
           </button>
         </div>
-        <nav class="tabs" aria-label="Sections">
-          <button class="tab active" data-tab="matches" type="button">Matches</button>
-          <button class="tab" data-tab="live" type="button">Live</button>
-          <button class="tab" data-tab="results" type="button">Results</button>
+        <nav class="tabs" aria-label="Main navigation" id="main-nav">
+          <a class="tab" href="#/" data-route="matches">Matches</a>
+          <a class="tab" href="#/live" data-route="live">Live</a>
+          <a class="tab" href="#/results" data-route="results">Results</a>
+          <a class="tab" href="#/tournament" data-route="tournament">Tournament</a>
+          <a class="tab" href="#/bracket" data-route="bracket">Bracket</a>
+          <a class="tab" href="#/players" data-route="players">Players</a>
+          <a class="tab" href="#/reports" data-route="reports">Reports</a>
+          <a class="tab" href="#/monitor" data-route="monitor">Monitor</a>
         </nav>
       </header>
 
       <main id="main">
+        <div id="freshness-bar" class="freshness-bar hidden"></div>
         <div id="loading" class="loading hidden">
           <div class="spinner"></div>
-          <p>Loading matches…</p>
+          <p>Loading…</p>
         </div>
         <div id="error" class="error-box hidden"></div>
         <div id="content"></div>
@@ -51,19 +75,17 @@
       <footer class="footer">
         <p>Designed by <strong>Amit Tavor</strong></p>
         <p class="footer-note">
-          For educational and research purposes only. Not betting or financial advice. Not
-          affiliated with FIFA.
+          For educational and research purposes only. Not betting or financial advice.
+          Not affiliated with FIFA.
         </p>
       </footer>
     </div>
 
-    <dialog id="match-modal" class="modal">
-      <div class="modal-inner">
-        <button id="modal-close" class="modal-close" type="button" aria-label="Close">×</button>
-        <div id="modal-body"></div>
-      </div>
-    </dialog>
-
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="/static/js/api.js" type="module"></script>
+    <script src="/static/js/flags.js" type="module"></script>
+    <script src="/static/js/components.js" type="module"></script>
+    <script src="/static/js/pages.js" type="module"></script>
     <script src="/static/app.js" type="module"></script>
   </body>
 </html>

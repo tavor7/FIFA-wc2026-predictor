@@ -9,10 +9,13 @@ from typing import Any, Optional
 import numpy as np
 
 from src import config, db
+from src.analytics.injury_impact import estimate_team_injury_xg
+from src.analytics.momentum import MomentumEngine
+from src.analytics.team_form import TeamFormAnalyzer
+from src.models.elo import EloModel
 from src.team_profiles import (
     get_team_prior,
     normalize_team_name,
-    prior_form,
     prior_to_goal_rates,
 )
 
@@ -37,6 +40,9 @@ FEATURE_COLUMNS = [
 ]
 
 MISSING_FLAGS = [f"missing_{col}" for col in FEATURE_COLUMNS]
+
+_form_analyzer = TeamFormAnalyzer()
+_momentum_engine = MomentumEngine(_form_analyzer)
 
 
 @dataclass
@@ -69,34 +75,21 @@ def _safe_mean(values: list[float], default: float) -> tuple[float, bool]:
 
 
 def _compute_form(team: str, before_date: str) -> tuple[float, bool]:
-    """Points-based form over last 5 matches (win=1, draw=0.5, loss=0)."""
-    team = normalize_team_name(team)
-    recent = db.get_team_recent_matches(team, before_date, limit=5)
-    if recent:
-        points: list[float] = []
-        for m in recent:
-            is_home = m["home_team"] == team
-            hg, ag = m["home_goals"], m["away_goals"]
-            if hg == ag:
-                points.append(0.5)
-            elif (is_home and hg > ag) or (not is_home and ag > hg):
-                points.append(1.0)
-            else:
-                points.append(0.0)
-        return float(np.mean(points)), False
-
-    all_time = db.get_team_all_time_averages(team)
-    if all_time["matches"] >= 2:
-        return all_time["form"], False
-
-    attack, defense = get_team_prior(team)
-    return prior_form(attack, defense), True
+    """Points-based form; prefers DB-computed opponent-adjusted form."""
+    snap = _form_analyzer.compute(team, before_date)
+    if snap.source == "computed":
+        return snap.opponent_adjusted_form, False
+    return snap.form_last_5, True
 
 
 def _compute_goal_averages(
     team: str, before_date: str
 ) -> tuple[float, float, bool, bool]:
-    """Return avg goals scored and conceded over last 5 matches."""
+    """Return avg goals scored/conceded; prefers computed last-5 from DB."""
+    snap = _form_analyzer.compute(team, before_date)
+    if snap.source == "computed" and snap.matches_used >= 2:
+        return snap.goals_scored_last_5, snap.goals_conceded_last_5, False, False
+
     team = normalize_team_name(team)
     recent = db.get_team_recent_matches(team, before_date, limit=5)
     if recent:
@@ -190,15 +183,12 @@ def _lineup_strength(match_id: int, team: str) -> tuple[float, bool]:
 
 
 def _injury_impact(team: str) -> tuple[int, float, bool]:
-    """Count injuries and estimated impact on key players."""
-    injuries = db.get_injuries_for_teams([team])
-    if not injuries:
+    """Count injuries and xG impact from injury analytics engine."""
+    report = estimate_team_injury_xg(team)
+    count = int(report.get("injured_count", 0))
+    if count == 0:
         return 0, 0.0, True
-
-    count = len(injuries)
-    # Estimate key player impact from injury records (higher for attackers/midfielders)
-    impact = min(count * 0.08, 0.5)
-    return count, impact, False
+    return count, float(report.get("total_xg_impact", 0.0)), False
 
 
 def _red_card_risk(team: str, before_date: str) -> tuple[float, bool]:
@@ -226,11 +216,23 @@ def build_features_for_match(match_row: Any) -> MatchFeatures:
     mf = MatchFeatures(match_id=match_id, home_team=home, away_team=away)
     missing: dict[str, bool] = {}
 
-    # Elo proxy from pre-tournament strength priors
+    home_form_snap = _form_analyzer.compute(home, match_date)
+    away_form_snap = _form_analyzer.compute(away, match_date)
+
+    # Elo from fitted ratings when enough history exists, else strength priors
     home_atk, home_def = get_team_prior(home)
     away_atk, away_def = get_team_prior(away)
-    mf.features["elo_diff"] = (home_atk + home_def) - (away_atk + away_def)
-    missing["elo_diff"] = False
+    prior_elo_diff = (home_atk + home_def) - (away_atk + away_def)
+    finished_count = len(db.get_all_finished_matches())
+    if finished_count >= 5:
+        elo_model = EloModel().get_or_fit()
+        mf.features["elo_diff"] = (
+            elo_model.get_rating(home) - elo_model.get_rating(away)
+        ) / 400.0
+        missing["elo_diff"] = False
+    else:
+        mf.features["elo_diff"] = prior_elo_diff
+        missing["elo_diff"] = True
 
     form_home, miss_fh = _compute_form(home, match_date)
     form_away, miss_fa = _compute_form(away, match_date)
@@ -283,12 +285,31 @@ def build_features_for_match(match_row: Any) -> MatchFeatures:
     missing["red_card_risk_recent_home"] = miss_rc_h
     missing["red_card_risk_recent_away"] = miss_rc_a
 
+    mom_home = _momentum_engine.compute(home, match_date, match_id=match_id)
+    mom_away = _momentum_engine.compute(away, match_date, match_id=match_id)
+
     mf.missing_flags = missing
     mf.metadata = {
         "form_home": form_home,
         "form_away": form_away,
+        "form_home_source": home_form_snap.source,
+        "form_away_source": away_form_snap.source,
+        "form_home_last_5": home_form_snap.form_last_5,
+        "form_home_last_10": home_form_snap.form_last_10,
+        "form_away_last_5": away_form_snap.form_last_5,
+        "form_away_last_10": away_form_snap.form_last_10,
+        "home_form_home_split": home_form_snap.home_form,
+        "home_form_away_split": home_form_snap.away_form,
+        "away_form_home_split": away_form_snap.home_form,
+        "away_form_away_split": away_form_snap.away_form,
         "injuries_home": inj_h_count,
         "injuries_away": inj_a_count,
+        "momentum_home": mom_home.score,
+        "momentum_away": mom_away.score,
+        "momentum_home_detail": mom_home.to_dict(),
+        "momentum_away_detail": mom_away.to_dict(),
+        "team_form_home": home_form_snap.to_dict(),
+        "team_form_away": away_form_snap.to_dict(),
     }
     return mf
 

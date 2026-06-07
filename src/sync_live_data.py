@@ -7,14 +7,17 @@ from typing import Any
 
 from src import db
 from src.api_client import APIClient
+from src.sync.sync_events import sync_events_for_match
 
 logger = logging.getLogger(__name__)
 
 LIVE_STATUSES = {"1H", "2H", "HT", "ET", "BT", "P", "LIVE", "IN_PLAY", "PAUSED"}
 
 
-def _sync_fixture_details(client: APIClient, match_id: int, external_id: str) -> None:
-    """Update statistics and lineups for a single fixture."""
+def _sync_fixture_details(client: APIClient, match_id: int, external_id: str) -> int:
+    """Update statistics, lineups, and events for a single fixture."""
+    events_written = 0
+
     stats_raw = client.get_fixture_statistics(external_id)
     if stats_raw:
         parsed = client.parse_statistics(stats_raw)
@@ -36,10 +39,17 @@ def _sync_fixture_details(client: APIClient, match_id: int, external_id: str) ->
                 minutes=player.get("minutes"),
             )
 
+    try:
+        events_written = sync_events_for_match(client, match_id, external_id)
+    except Exception as exc:
+        logger.warning("Event sync failed for live match %s: %s", external_id, exc)
+
+    return events_written
+
 
 def sync_live_data(client: APIClient | None = None) -> dict[str, Any]:
     """
-    Poll live matches and update scores, status, stats, and lineups.
+    Poll live matches and update scores, status, stats, lineups, and events.
     Also refreshes any locally tracked live matches.
     """
     client = client or APIClient()
@@ -48,6 +58,7 @@ def sync_live_data(client: APIClient | None = None) -> dict[str, Any]:
     live_fixtures = client.get_live_matches()
     local_live = db.get_live_matches()
     updated = 0
+    events_written = 0
     errors = 0
 
     # Build lookup of external ids from API
@@ -70,7 +81,9 @@ def sync_live_data(client: APIClient | None = None) -> dict[str, Any]:
                 home_team_id=fixture.get("home_team_id"),
                 away_team_id=fixture.get("away_team_id"),
             )
-            _sync_fixture_details(client, match_id, str(fixture["external_fixture_id"]))
+            events_written += _sync_fixture_details(
+                client, match_id, str(fixture["external_fixture_id"])
+            )
             updated += 1
         except Exception as exc:
             logger.error("Live sync failed for %s: %s", fixture.get("external_fixture_id"), exc)
@@ -81,13 +94,14 @@ def sync_live_data(client: APIClient | None = None) -> dict[str, Any]:
         ext_id = str(row["external_fixture_id"])
         if ext_id not in api_by_id:
             try:
-                _sync_fixture_details(client, int(row["id"]), ext_id)
+                events_written += _sync_fixture_details(client, int(row["id"]), ext_id)
             except Exception as exc:
                 logger.warning("Could not refresh local live match %s: %s", ext_id, exc)
 
     return {
         "live_from_api": len(live_fixtures),
         "updated": updated,
+        "events_written": events_written,
         "errors": errors,
     }
 

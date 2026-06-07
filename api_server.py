@@ -2,38 +2,69 @@
 
 from __future__ import annotations
 
-import json
+import logging
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 from src import db
-from src.db import db_backend
-from src.predict import generate_predictions, retrain_and_predict
-from src.sync_injuries import sync_injuries
-from src.sync_live_data import sync_live_data
-from src.sync_matches import sync_all_matches
-from src.sync_historical import sync_historical_seasons
+from src.api.routes import router
+from src.model_storage import load_models_on_startup, save_models_after_train
+from src.scheduler import start_scheduler, stop_scheduler
 
-AUTHOR = "Amit Tavor"
-DISCLAIMER = (
-    "For educational and research purposes only. Not betting or financial advice. "
-    "Not affiliated with FIFA. Use at your own discretion."
-)
+logger = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 STATIC_DIR = WEB_DIR / "static"
+ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "true").lower() in ("1", "true", "yes")
+
+
+class CacheControlMiddleware(BaseHTTPMiddleware):
+    """Short cache for read-only GET JSON endpoints."""
+
+    CACHE_PATHS = (
+        "/teams",
+        "/tournament/",
+        "/players/",
+        "/meta/freshness",
+        "/matches/upcoming",
+        "/matches/recent",
+    )
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+        if request.method == "GET" and any(request.url.path.startswith(p) for p in self.CACHE_PATHS):
+            response.headers["Cache-Control"] = "public, max-age=60"
+        return response
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.init_db()
+    load_models_on_startup()
+    if ENABLE_SCHEDULER:
+        start_scheduler()
+        logger.info("Background scheduler enabled")
+    yield
+    stop_scheduler()
+
 
 app = FastAPI(
     title="WC 2026 Research API",
-    description=f"Designed by {AUTHOR}. {DISCLAIMER}",
-    version="1.0.0",
+    description="Designed by Amit Tavor. Research recommendation system.",
+    version="2.0.0",
+    lifespan=lifespan,
 )
 
+app.add_middleware(CacheControlMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,145 +73,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-db.init_db()
+app.include_router(router)
 
 if STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-def _row(row) -> dict[str, Any]:
-    return dict(row) if row else {}
-
-
-def _match_with_prediction(row) -> dict[str, Any]:
-    m = _row(row)
-    if not m:
-        return {}
-    pred = db.get_prediction(int(m["id"]))
-    if pred:
-        m["prediction"] = {
-            "predicted_home_goals": pred["predicted_home_goals"],
-            "predicted_away_goals": pred["predicted_away_goals"],
-            "home_win_prob": pred["home_win_prob"],
-            "draw_prob": pred["draw_prob"],
-            "away_win_prob": pred["away_win_prob"],
-            "exact_score_prob": pred["exact_score_prob"],
-            "top_scorelines": json.loads(pred["top_scorelines_json"] or "[]"),
-            "explanation": pred["explanation"],
-            "generated_at": pred["generated_at"],
-        }
-    return m
-
-
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {
-        "status": "ok",
-        "author": AUTHOR,
-        "disclaimer": DISCLAIMER,
-        "database": db_backend(),
-    }
-
-
 @app.get("/")
 def web_app() -> FileResponse:
-    """Serve the web UI (matches, live, results)."""
     index = WEB_DIR / "index.html"
     if not index.is_file():
         raise HTTPException(status_code=404, detail="Web UI not found")
     return FileResponse(index)
-
-
-@app.get("/meta")
-def meta() -> dict[str, Any]:
-    return {
-        "author": AUTHOR,
-        "disclaimer": DISCLAIMER,
-        "disclaimer_short": "Research only. Not betting advice.",
-    }
-
-
-@app.get("/stats")
-def stats() -> dict[str, int]:
-    return {
-        "upcoming": len(db.get_upcoming_matches(limit=200)),
-        "live": len(db.get_live_matches()),
-        "predictions": len(db.get_all_predictions()),
-    }
-
-
-@app.get("/matches/upcoming")
-def upcoming_matches() -> list[dict[str, Any]]:
-    return [_match_with_prediction(m) for m in db.get_upcoming_matches(limit=100)]
-
-
-@app.get("/matches/live")
-def live_matches() -> list[dict[str, Any]]:
-    return [_match_with_prediction(m) for m in db.get_live_matches()]
-
-
-@app.get("/matches/recent")
-def recent_matches(limit: int = 40) -> list[dict[str, Any]]:
-    return [_row(m) for m in db.get_recent_matches(limit=limit)]
-
-
-@app.get("/matches/{match_id}")
-def match_detail(match_id: int) -> dict[str, Any]:
-    row = db.get_match_by_id(match_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Match not found")
-    m = _match_with_prediction(row)
-    m["injuries"] = [
-        _row(i) for i in db.get_injuries_for_teams([m["home_team"], m["away_team"]])
-    ]
-    m["lineups"] = [_row(l) for l in db.get_lineups(match_id)]
-    m["team_stats"] = [_row(s) for s in db.get_team_match_stats(match_id)]
-    return m
-
-
-@app.post("/sync/matches")
-def sync_matches() -> dict[str, Any]:
-    return sync_all_matches(days_ahead=120, days_back=30)
-
-
-@app.post("/sync/live")
-def sync_live() -> dict[str, Any]:
-    return sync_live_data()
-
-
-@app.post("/sync/injuries")
-def sync_inj() -> dict[str, Any]:
-    return sync_injuries()
-
-
-@app.post("/predictions/generate")
-def gen_predictions() -> dict[str, Any]:
-    """Regenerate predictions for all upcoming matches."""
-    # Ensure historical context exists for team differentiation
-    if len(db.get_all_finished_matches()) < 10:
-        sync_historical_seasons()
-    return generate_predictions()
-
-
-@app.post("/model/retrain")
-def retrain() -> dict[str, Any]:
-    return retrain_and_predict()
-
-
-@app.post("/bootstrap")
-def bootstrap() -> dict[str, Any]:
-    """Sync fixtures, historical data, and regenerate all predictions."""
-    result: dict[str, Any] = {}
-
-    if len(db.get_all_finished_matches()) < 10:
-        result["historical"] = sync_historical_seasons()
-
-    # World Cup schedule spans months; 14 days is too narrow for football-data fallback
-    result["sync"] = sync_all_matches(days_ahead=120, days_back=30)
-    result["predictions"] = generate_predictions()
-    result["stats"] = {
-        "upcoming": len(db.get_upcoming_matches(limit=200)),
-        "finished": len(db.get_all_finished_matches()),
-        "predictions": len(db.get_all_predictions()),
-    }
-    return result

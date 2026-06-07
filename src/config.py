@@ -53,6 +53,8 @@ MIN_REQUEST_INTERVAL: float = 6.0
 MODEL_DIR: Path = PROJECT_ROOT / "data" / "models"
 HOME_MODEL_PATH: Path = MODEL_DIR / "home_goals_model.joblib"
 AWAY_MODEL_PATH: Path = MODEL_DIR / "away_goals_model.joblib"
+XGB_HOME_MODEL_PATH: Path = MODEL_DIR / "xgb_home_model.joblib"
+XGB_AWAY_MODEL_PATH: Path = MODEL_DIR / "xgb_away_model.joblib"
 
 # Feature defaults
 DEFAULT_ELO: float = 1500.0

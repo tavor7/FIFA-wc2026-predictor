@@ -73,7 +73,6 @@ def generate_explanation(
     f = features.features
     reasons: list[str] = []
 
-    # Home team factors
     for phrase in [
         _form_phrase(home_team, f.get("recent_form_home", 0.5), f.get("recent_form_away", 0.5)),
         _attack_phrase(home_team, f.get("avg_goals_scored_home_last_5", 1.2), f.get("avg_goals_conceded_away_last_5", 1.2)),
@@ -89,7 +88,6 @@ def generate_explanation(
         if phrase:
             reasons.append(phrase)
 
-    # Away team factors
     for phrase in [
         _form_phrase(away_team, f.get("recent_form_away", 0.5), f.get("recent_form_home", 0.5)),
         _attack_phrase(away_team, f.get("avg_goals_scored_away_last_5", 1.2), f.get("avg_goals_conceded_home_last_5", 1.2)),
@@ -112,19 +110,16 @@ def generate_explanation(
     if f.get("home_advantage", 0) > 0:
         reasons.append(f"{home_team} benefits from a home-advantage adjustment")
 
-    # Outcome context
     if outcomes.get("draw", 0) > 0.28:
         reasons.append("a draw remains a plausible outcome based on balanced probabilities")
 
     if outcomes.get("away_win", 0) > 0.4:
         reasons.append(f"{away_team} still has a meaningful chance of winning away")
 
-    # Missing data notice
     missing_count = sum(1 for v in features.missing_flags.values() if v)
     if missing_count > 5:
         reasons.append("some inputs used default estimates due to limited available data")
 
-    # Compose final text
     score_str = f"{predicted_home}-{predicted_away}"
     if not reasons:
         top = top_scorelines[0] if top_scorelines else {}

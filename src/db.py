@@ -72,7 +72,10 @@ def _execute(conn: Any, sql: str, params: tuple | list = ()) -> Any:
 def _executescript(conn: Any, script: str) -> None:
     if config.USE_POSTGRES:
         for stmt in filter(None, (s.strip() for s in script.split(";"))):
-            if stmt.upper().startswith("CREATE INDEX") or stmt.upper().startswith("CREATE TABLE"):
+            upper = stmt.upper()
+            if upper.startswith((
+                "CREATE INDEX", "CREATE TABLE", "ALTER TABLE",
+            )):
                 conn.execute(stmt)
     else:
         conn.executescript(script)
@@ -93,6 +96,11 @@ CREATE TABLE IF NOT EXISTS matches (
     home_goals INTEGER,
     away_goals INTEGER,
     venue TEXT,
+    stage TEXT,
+    group_name TEXT,
+    round_name TEXT,
+    referee_name TEXT,
+    weather_json TEXT,
     last_updated TEXT
 );
 
@@ -147,7 +155,220 @@ CREATE TABLE IF NOT EXISTS predictions (
     exact_score_prob REAL,
     top_scorelines_json TEXT,
     explanation TEXT,
+    confidence_pct REAL,
+    data_completeness_pct REAL,
+    model_agreement TEXT,
+    ensemble_json TEXT,
+    factor_breakdown_json TEXT,
     FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS teams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    slug TEXT UNIQUE,
+    country_code TEXT,
+    api_team_id INTEGER UNIQUE,
+    logo_url TEXT,
+    last_updated TEXT
+);
+
+CREATE TABLE IF NOT EXISTS players (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    api_player_id INTEGER UNIQUE,
+    team_id INTEGER,
+    name TEXT NOT NULL,
+    position TEXT,
+    rating REAL,
+    form REAL,
+    caps INTEGER,
+    club TEXT,
+    last_updated TEXT,
+    FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS player_match_stats (
+    match_id INTEGER NOT NULL,
+    api_player_id INTEGER,
+    player_name TEXT NOT NULL,
+    team TEXT NOT NULL,
+    goals INTEGER DEFAULT 0,
+    assists INTEGER DEFAULT 0,
+    yellow_cards INTEGER DEFAULT 0,
+    red_cards INTEGER DEFAULT 0,
+    minutes INTEGER,
+    rating REAL,
+    is_motm INTEGER DEFAULT 0,
+    PRIMARY KEY (match_id, team, player_name),
+    FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS match_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id INTEGER NOT NULL,
+    minute INTEGER,
+    extra_minute INTEGER,
+    team TEXT,
+    player_name TEXT,
+    player_id INTEGER,
+    event_type TEXT NOT NULL,
+    detail TEXT,
+    FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS standings (
+    group_name TEXT NOT NULL,
+    team TEXT NOT NULL,
+    team_id INTEGER,
+    season INTEGER NOT NULL,
+    played INTEGER DEFAULT 0,
+    won INTEGER DEFAULT 0,
+    drawn INTEGER DEFAULT 0,
+    lost INTEGER DEFAULT 0,
+    goals_for INTEGER DEFAULT 0,
+    goals_against INTEGER DEFAULT 0,
+    goal_diff INTEGER DEFAULT 0,
+    points INTEGER DEFAULT 0,
+    rank INTEGER,
+    last_updated TEXT,
+    PRIMARY KEY (group_name, team, season)
+);
+
+CREATE TABLE IF NOT EXISTS bracket_nodes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stage TEXT NOT NULL,
+    round_name TEXT NOT NULL,
+    slot INTEGER NOT NULL,
+    match_id INTEGER,
+    home_team TEXT,
+    away_team TEXT,
+    winner_team_id INTEGER,
+    parent_node_id INTEGER,
+    last_updated TEXT,
+    UNIQUE (stage, round_name, slot),
+    FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS head_to_head (
+    team_a TEXT NOT NULL,
+    team_b TEXT NOT NULL,
+    team_a_id INTEGER,
+    team_b_id INTEGER,
+    matches_played INTEGER DEFAULT 0,
+    team_a_wins INTEGER DEFAULT 0,
+    team_b_wins INTEGER DEFAULT 0,
+    draws INTEGER DEFAULT 0,
+    team_a_goals INTEGER DEFAULT 0,
+    team_b_goals INTEGER DEFAULT 0,
+    summary_json TEXT,
+    last_updated TEXT,
+    PRIMARY KEY (team_a, team_b)
+);
+
+CREATE TABLE IF NOT EXISTS team_history (
+    team TEXT PRIMARY KEY,
+    team_id INTEGER,
+    wc_appearances INTEGER DEFAULT 0,
+    best_finish TEXT,
+    total_wc_goals INTEGER DEFAULT 0,
+    history_json TEXT,
+    last_updated TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sync_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    source TEXT,
+    records_affected INTEGER DEFAULT 0,
+    error_message TEXT,
+    started_at TEXT,
+    finished_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS data_freshness (
+    entity TEXT PRIMARY KEY,
+    last_updated TEXT,
+    completeness_pct REAL,
+    source TEXT,
+    notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS prediction_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id INTEGER NOT NULL,
+    version INTEGER NOT NULL,
+    generated_at TEXT NOT NULL,
+    home_win_prob REAL,
+    draw_prob REAL,
+    away_win_prob REAL,
+    predicted_home_goals REAL,
+    predicted_away_goals REAL,
+    features_json TEXT,
+    reason_changed TEXT,
+    UNIQUE (match_id, version),
+    FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS feature_store (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id INTEGER NOT NULL,
+    generated_at TEXT NOT NULL,
+    features_json TEXT,
+    missing_flags_json TEXT,
+    metadata_json TEXT,
+    FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tournament_simulations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    generated_at TEXT NOT NULL,
+    n_simulations INTEGER NOT NULL,
+    results_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS live_prob_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id INTEGER NOT NULL,
+    recorded_at TEXT NOT NULL,
+    home_win_prob REAL,
+    draw_prob REAL,
+    away_win_prob REAL,
+    match_minute INTEGER,
+    FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_live_prob_match ON live_prob_history(match_id, recorded_at);
+
+CREATE TABLE IF NOT EXISTS weather_forecasts (
+    match_id INTEGER PRIMARY KEY,
+    temp_c REAL,
+    humidity_pct REAL,
+    wind_kmh REAL,
+    rain_mm REAL,
+    conditions TEXT,
+    forecast_json TEXT,
+    last_updated TEXT,
+    FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS referees (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    api_referee_id INTEGER UNIQUE,
+    name TEXT NOT NULL UNIQUE,
+    nationality TEXT,
+    last_updated TEXT
+);
+
+CREATE TABLE IF NOT EXISTS referee_stats (
+    referee_id INTEGER PRIMARY KEY,
+    matches_officiated INTEGER DEFAULT 0,
+    avg_yellow_cards REAL,
+    avg_red_cards REAL,
+    pen_rate REAL,
+    stats_json TEXT,
+    last_updated TEXT,
+    FOREIGN KEY (referee_id) REFERENCES referees(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_matches_date ON matches(date);
@@ -165,6 +386,153 @@ def init_db() -> None:
     with get_connection() as conn:
         script = SCHEMA_POSTGRES if config.USE_POSTGRES else SCHEMA_SQLITE
         _executescript(conn, script)
+        _migrate_extended_schema(conn)
+
+
+def _table_columns(conn: Any, table: str) -> set[str]:
+    if config.USE_POSTGRES:
+        rows = conn.execute(
+            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+            """,
+            (table,),
+        ).fetchall()
+        return {r["column_name"] for r in rows}
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {r[1] for r in rows}
+
+
+def _table_exists(conn: Any, table: str) -> bool:
+    if config.USE_POSTGRES:
+        row = conn.execute(
+            """
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = %s
+            """,
+            (table,),
+        ).fetchone()
+        return row is not None
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
+def _migrate_extended_schema(conn: Any) -> None:
+    """Add extended columns and analytics tables on existing databases."""
+    match_cols = {
+        "stage": "TEXT",
+        "group_name": "TEXT",
+        "round_name": "TEXT",
+        "referee_name": "TEXT",
+        "weather_json": "TEXT",
+    }
+    if _table_exists(conn, "matches"):
+        existing_match = _table_columns(conn, "matches")
+        for col, col_type in match_cols.items():
+            if col not in existing_match:
+                conn.execute(f"ALTER TABLE matches ADD COLUMN {col} {col_type}")
+
+    pred_cols = {
+        "confidence_pct": "REAL",
+        "data_completeness_pct": "REAL",
+        "model_agreement": "TEXT",
+        "ensemble_json": "TEXT",
+        "factor_breakdown_json": "TEXT",
+    }
+    existing = _table_columns(conn, "predictions")
+    for col, col_type in pred_cols.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE predictions ADD COLUMN {col} {col_type}")
+
+    if _table_exists(conn, "feature_store"):
+        fs_cols = _table_columns(conn, "feature_store")
+        if "metadata_json" not in fs_cols:
+            conn.execute("ALTER TABLE feature_store ADD COLUMN metadata_json TEXT")
+
+    if config.USE_POSTGRES:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS feature_store (
+                id SERIAL PRIMARY KEY,
+                match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+                generated_at TEXT NOT NULL,
+                features_json TEXT NOT NULL,
+                missing_flags_json TEXT,
+                metadata_json TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tournament_simulations (
+                id SERIAL PRIMARY KEY,
+                generated_at TEXT NOT NULL,
+                n_simulations INTEGER NOT NULL,
+                results_json TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feature_store_match ON feature_store(match_id)"
+        )
+    else:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS feature_store (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id INTEGER NOT NULL,
+                generated_at TEXT NOT NULL,
+                features_json TEXT NOT NULL,
+                missing_flags_json TEXT,
+                metadata_json TEXT,
+                FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feature_store_match ON feature_store(match_id)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tournament_simulations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                generated_at TEXT NOT NULL,
+                n_simulations INTEGER NOT NULL,
+                results_json TEXT NOT NULL
+            )
+            """
+        )
+
+    _ensure_optional_indexes(conn)
+
+
+def _ensure_optional_indexes(conn: Any) -> None:
+    """Create indexes only when referenced columns exist."""
+    if _table_exists(conn, "matches"):
+        cols = _table_columns(conn, "matches")
+        if {"stage", "group_name", "round_name"}.issubset(cols):
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_matches_stage ON matches(stage, group_name, round_name)"
+            )
+    if _table_exists(conn, "teams") and "slug" in _table_columns(conn, "teams"):
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_teams_slug ON teams(slug)")
+    if _table_exists(conn, "match_events"):
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_match_events_match ON match_events(match_id)"
+        )
+    if _table_exists(conn, "standings"):
+        cols = _table_columns(conn, "standings")
+        if {"group_name", "season"}.issubset(cols):
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_standings_group ON standings(group_name, season)"
+            )
+    if _table_exists(conn, "feature_store"):
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feature_store_match ON feature_store(match_id)"
+        )
 
 
 def db_backend() -> str:
@@ -316,6 +684,11 @@ def upsert_prediction(
     match_id: int, predicted_home_goals: float, predicted_away_goals: float,
     home_win_prob: float, draw_prob: float, away_win_prob: float,
     exact_score_prob: float, top_scorelines: list[dict[str, Any]], explanation: str,
+    confidence_pct: Optional[float] = None,
+    data_completeness_pct: Optional[float] = None,
+    model_agreement: Optional[str] = None,
+    ensemble_json: Optional[dict[str, Any]] = None,
+    factor_breakdown_json: Optional[dict[str, Any]] = None,
 ) -> None:
     now = datetime.utcnow().isoformat()
     with get_connection() as conn:
@@ -325,8 +698,10 @@ def upsert_prediction(
             INSERT INTO predictions (
                 match_id, generated_at, predicted_home_goals, predicted_away_goals,
                 home_win_prob, draw_prob, away_win_prob, exact_score_prob,
-                top_scorelines_json, explanation
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                top_scorelines_json, explanation,
+                confidence_pct, data_completeness_pct, model_agreement,
+                ensemble_json, factor_breakdown_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(match_id) DO UPDATE SET
                 generated_at=excluded.generated_at,
                 predicted_home_goals=excluded.predicted_home_goals,
@@ -336,12 +711,20 @@ def upsert_prediction(
                 away_win_prob=excluded.away_win_prob,
                 exact_score_prob=excluded.exact_score_prob,
                 top_scorelines_json=excluded.top_scorelines_json,
-                explanation=excluded.explanation
+                explanation=excluded.explanation,
+                confidence_pct=excluded.confidence_pct,
+                data_completeness_pct=excluded.data_completeness_pct,
+                model_agreement=excluded.model_agreement,
+                ensemble_json=excluded.ensemble_json,
+                factor_breakdown_json=excluded.factor_breakdown_json
             """,
             (
                 match_id, now, predicted_home_goals, predicted_away_goals,
                 home_win_prob, draw_prob, away_win_prob, exact_score_prob,
                 json.dumps(top_scorelines), explanation,
+                confidence_pct, data_completeness_pct, model_agreement,
+                json.dumps(ensemble_json) if ensemble_json is not None else None,
+                json.dumps(factor_breakdown_json) if factor_breakdown_json is not None else None,
             ),
         )
 
@@ -518,3 +901,68 @@ def get_team_all_time_averages(team: str) -> dict[str, float]:
         "conceded": sum(conceded) / n,
         "form": sum(points) / n,
     }
+
+
+def upsert_feature_store(
+    match_id: int,
+    features: dict[str, float],
+    missing_flags: dict[str, bool],
+    metadata: Optional[dict[str, Any]] = None,
+) -> None:
+    now = datetime.utcnow().isoformat()
+    with get_connection() as conn:
+        _execute(conn, "DELETE FROM feature_store WHERE match_id = ?", (match_id,))
+        _execute(
+            conn,
+            """
+            INSERT INTO feature_store (
+                match_id, generated_at, features_json, missing_flags_json, metadata_json
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                match_id,
+                now,
+                json.dumps(features),
+                json.dumps(missing_flags),
+                json.dumps(metadata or {}),
+            ),
+        )
+
+
+def get_feature_store(match_id: int) -> Optional[Row]:
+    with get_connection() as conn:
+        return _execute(
+            conn,
+            "SELECT * FROM feature_store WHERE match_id = ? ORDER BY id DESC LIMIT 1",
+            (match_id,),
+        ).fetchone()
+
+
+def upsert_tournament_simulation(n_simulations: int, results: dict[str, Any]) -> int:
+    now = datetime.utcnow().isoformat()
+    with get_connection() as conn:
+        _execute(
+            conn,
+            """
+            INSERT INTO tournament_simulations (generated_at, n_simulations, results_json)
+            VALUES (?, ?, ?)
+            """,
+            (now, n_simulations, json.dumps(results)),
+        )
+        if config.USE_POSTGRES:
+            row = conn.execute("SELECT currval(pg_get_serial_sequence('tournament_simulations','id')) AS id").fetchone()
+            return int(row["id"])
+        return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+
+def get_latest_tournament_simulation() -> Optional[dict[str, Any]]:
+    with get_connection() as conn:
+        row = _execute(
+            conn,
+            "SELECT * FROM tournament_simulations ORDER BY id DESC LIMIT 1",
+        ).fetchone()
+    if not row:
+        return None
+    data = dict(row)
+    data["results"] = json.loads(data["results_json"])
+    return data

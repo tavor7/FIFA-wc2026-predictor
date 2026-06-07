@@ -300,6 +300,45 @@ class APIClient:
             logger.warning("Events fetch failed for fixture %s: %s", fixture_id, exc)
             return []
 
+    def get_fixture_players(self, fixture_id: int | str) -> list[dict[str, Any]]:
+        """Fetch per-player match statistics and ratings for a fixture."""
+        try:
+            data = self._api_football_request(
+                "fixtures/players",
+                {"fixture": fixture_id},
+                use_cache=False,
+            )
+            return data.get("response", [])
+        except APIError as exc:
+            logger.warning("Fixture players fetch failed for fixture %s: %s", fixture_id, exc)
+            return []
+
+    def get_standings(self, league: int, season: int) -> list[dict[str, Any]]:
+        """Fetch league/tournament standings tables."""
+        try:
+            data = self._api_football_request(
+                "standings",
+                {"league": league, "season": season},
+            )
+            return data.get("response", [])
+        except APIError as exc:
+            logger.warning("Standings fetch failed for league %s season %s: %s", league, season, exc)
+            return []
+
+    def get_head_to_head(self, team1_id: int, team2_id: int) -> list[dict[str, Any]]:
+        """Fetch historical fixtures between two teams."""
+        try:
+            data = self._api_football_request(
+                "fixtures/headtohead",
+                {"h2h": f"{team1_id}-{team2_id}"},
+            )
+            return data.get("response", [])
+        except APIError as exc:
+            logger.warning(
+                "Head-to-head fetch failed for %s vs %s: %s", team1_id, team2_id, exc
+            )
+            return []
+
     def get_injuries(
         self, team_id: Optional[int] = None, fixture_id: Optional[int] = None
     ) -> list[dict[str, Any]]:
@@ -424,6 +463,73 @@ class APIClient:
                     }
                 )
         return players
+
+    @staticmethod
+    def parse_events(api_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Parse API-Football match events into flat records."""
+        records: list[dict[str, Any]] = []
+        for item in api_events:
+            team = item.get("team", {})
+            player = item.get("player", {})
+            assist = item.get("assist") or {}
+            time_info = item.get("time", {}) or {}
+            records.append(
+                {
+                    "minute": time_info.get("elapsed"),
+                    "extra_minute": time_info.get("extra"),
+                    "team": team.get("name", "Unknown"),
+                    "team_id": team.get("id"),
+                    "player_id": player.get("id"),
+                    "player_name": player.get("name"),
+                    "assist_id": assist.get("id") if assist else None,
+                    "assist_name": assist.get("name") if assist else None,
+                    "event_type": item.get("type"),
+                    "detail": item.get("detail"),
+                    "comments": item.get("comments"),
+                }
+            )
+        return records
+
+    @staticmethod
+    def parse_standings(api_standings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Parse API-Football standings response into flat group rows."""
+        rows: list[dict[str, Any]] = []
+        for block in api_standings:
+            league = block.get("league", {})
+            league_id = league.get("id")
+            season = league.get("season")
+            for group_table in league.get("standings") or []:
+                group_name = None
+                entries = group_table
+                if isinstance(group_table, dict):
+                    group_name = group_table.get("group")
+                    entries = group_table.get("table") or []
+                for entry in entries:
+                    team = entry.get("team", {})
+                    all_stats = entry.get("all") or {}
+                    goals = all_stats.get("goals") or {}
+                    rows.append(
+                        {
+                            "league_id": league_id,
+                            "season": season,
+                            "group_name": group_name or entry.get("group"),
+                            "rank": entry.get("rank"),
+                            "team_id": team.get("id"),
+                            "team_name": team.get("name", "Unknown"),
+                            "played": all_stats.get("played"),
+                            "win": all_stats.get("win"),
+                            "draw": all_stats.get("draw"),
+                            "loss": all_stats.get("lose"),
+                            "goals_for": goals.get("for"),
+                            "goals_against": goals.get("against"),
+                            "goal_diff": entry.get("goalsDiff"),
+                            "points": entry.get("points"),
+                            "form": entry.get("form"),
+                            "status": entry.get("status"),
+                            "description": entry.get("description"),
+                        }
+                    )
+        return rows
 
     @staticmethod
     def parse_injuries(api_injuries: list[dict[str, Any]]) -> list[dict[str, Any]]:
