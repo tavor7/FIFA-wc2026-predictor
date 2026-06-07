@@ -1,5 +1,7 @@
 # Render.com deployment — https://fifa-wc2026-predictor.onrender.com (your URL will differ)
 
+> **Research only.** Designed by **Amit Tavor**. For educational use — not betting advice. See [DISCLAIMER.md](DISCLAIMER.md).
+
 Deploy the app so it works on your phone from anywhere, not only on local WiFi.
 
 Repo: [github.com/tavor7/FIFA-wc2026-predictor](https://github.com/tavor7/FIFA-wc2026-predictor)
