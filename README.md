@@ -47,55 +47,22 @@ SEASON=2026
 DB_PATH=data/football.db
 ```
 
-## Run on your phone
+## Run on your phone (remote)
 
-### Option A — Streamlit Cloud (recommended, works anywhere)
+Deploy on **[Render](https://render.com)** for a public URL that works anywhere.
 
-Free hosting with a public URL you can open on any phone.
+Repo: [github.com/tavor7/FIFA-wc2026-predictor](https://github.com/tavor7/FIFA-wc2026-predictor)
 
-1. **Push code to GitHub** (do not commit `.env` — it's in `.gitignore`):
+**Quick steps:**
 
-```bash
-cd football_research_predictor
-git init
-git add .
-git commit -m "WC 2026 predictor app"
-# Create a repo on github.com, then:
-git remote add origin https://github.com/YOUR_USERNAME/wc2026-predictor.git
-git push -u origin main
-```
+1. Go to [dashboard.render.com](https://dashboard.render.com) → sign in with GitHub.
+2. **New +** → **Blueprint** → select `tavor7/FIFA-wc2026-predictor`.
+3. Set secret env vars: `API_FOOTBALL_KEY`, `FOOTBALL_DATA_KEY` (from your `.env`).
+4. Deploy → open the Render URL on your phone.
 
-2. Go to [share.streamlit.io](https://share.streamlit.io) and sign in with GitHub.
+Full instructions: see **[DEPLOY.md](DEPLOY.md)**.
 
-3. Click **New app** → select your repo → set **Main file path** to `app.py`.
-
-4. Under **Advanced settings → Secrets**, paste your keys (copy from `.streamlit/secrets.toml.example`):
-
-```toml
-API_FOOTBALL_KEY = "your_key"
-FOOTBALL_DATA_KEY = "your_key"
-LEAGUE_ID = "1"
-SEASON = "2026"
-FOOTBALL_DATA_COMPETITION_ID = "2000"
-```
-
-5. Deploy. You'll get a URL like `https://your-app.streamlit.app` — open it on your phone and bookmark it.
-
-> **Note:** Cloud apps use a fresh database on each cold start. The app auto-syncs fixtures on first load; tap **Sync matches** if data looks empty.
-
-### Option B — Same WiFi (quick test, no deploy)
-
-Run on your Mac and open from phone on the same network:
-
-```bash
-streamlit run app.py --server.address 0.0.0.0 --server.port 8501
-```
-
-Find your Mac's IP: **System Settings → Network**, then on your phone open:
-
-`http://YOUR_MAC_IP:8501`
-
-This only works while your Mac is running and on the same WiFi.
+> Free tier sleeps when idle; first load after sleep may take ~30–60s. The app auto-syncs fixtures on first visit.
 
 ## Local development
 

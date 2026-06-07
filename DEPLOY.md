@@ -1,83 +1,104 @@
-# Deploy remotely (Streamlit Cloud)
+# Render.com deployment — https://fifa-wc2026-predictor.onrender.com (your URL will differ)
 
-Your app will get a public URL like `https://wc2026-predictor.streamlit.app` that works on any phone, anywhere.
+Deploy the app so it works on your phone from anywhere, not only on local WiFi.
 
-## Step 1 — Create a GitHub account & repo
+Repo: [github.com/tavor7/FIFA-wc2026-predictor](https://github.com/tavor7/FIFA-wc2026-predictor)
 
-1. Go to [github.com](https://github.com) and sign in (or create an account).
-2. Click **+ → New repository**.
-3. Name it e.g. `wc2026-predictor`.
-4. Leave it **Public** (required for free Streamlit Cloud).
-5. Do **not** add README or .gitignore (you already have them).
-6. Click **Create repository**.
+---
 
-## Step 2 — Push your code
+## Option A — Blueprint (easiest)
 
-Run these in Terminal (replace `YOUR_USERNAME`):
+1. Go to [dashboard.render.com](https://dashboard.render.com) and sign in with **GitHub**.
+2. Click **New +** → **Blueprint**.
+3. Connect repo **`tavor7/FIFA-wc2026-predictor`**.
+4. Render detects `render.yaml` — click **Apply**.
+5. When prompted, set these **secret** environment variables:
+   - `API_FOOTBALL_KEY` — from your local `.env`
+   - `FOOTBALL_DATA_KEY` — from your local `.env`
+6. Wait 5–10 minutes for the first deploy.
+
+---
+
+## Option B — Manual Web Service
+
+1. [dashboard.render.com](https://dashboard.render.com) → **New +** → **Web Service**.
+2. Connect **`tavor7/FIFA-wc2026-predictor`**.
+3. Settings:
+
+| Field | Value |
+|-------|--------|
+| **Name** | `fifa-wc2026-predictor` |
+| **Region** | closest to you |
+| **Branch** | `main` |
+| **Runtime** | Python 3 |
+| **Build Command** | `pip install -r requirements.txt` |
+| **Start Command** | `streamlit run app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false` |
+| **Plan** | Free |
+
+4. **Environment** → add variables:
+
+| Key | Value |
+|-----|--------|
+| `PYTHON_VERSION` | `3.11.9` |
+| `API_FOOTBALL_KEY` | your key |
+| `FOOTBALL_DATA_KEY` | your key |
+| `LEAGUE_ID` | `1` |
+| `SEASON` | `2026` |
+| `FOOTBALL_DATA_COMPETITION_ID` | `2000` |
+| `DB_PATH` | `data/football.db` |
+
+5. Click **Create Web Service**.
+
+---
+
+## After deploy
+
+1. Open your Render URL on your phone (e.g. `https://fifa-wc2026-predictor.onrender.com`).
+2. **First visit may take 30–60s** — free tier wakes from sleep.
+3. If matches are empty: **Sync & update data → Sync matches → Generate picks**.
+4. Bookmark or **Add to Home Screen** on your phone.
+
+---
+
+## Updating the app
 
 ```bash
 cd /Users/amit/Desktop/AMIT/DataScience/S8/FIFA/football_research_predictor
-
-git init
-git add .
-git commit -m "WC 2026 predictor app"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/wc2026-predictor.git
-git push -u origin main
-```
-
-> Your `.env` file is **not** uploaded (it's in `.gitignore`). API keys go in Step 4.
-
-## Step 3 — Deploy on Streamlit Cloud
-
-1. Go to [share.streamlit.io](https://share.streamlit.io).
-2. Sign in with **GitHub**.
-3. Click **Create app**.
-4. Choose your repo `wc2026-predictor`.
-5. Set **Main file path** to: `app.py`
-6. Click **Advanced settings** → open **Secrets**.
-7. Paste this (use your real keys from `.env`):
-
-```toml
-API_FOOTBALL_KEY = "paste_your_api_football_key"
-FOOTBALL_DATA_KEY = "paste_your_football_data_key"
-LEAGUE_ID = "1"
-SEASON = "2026"
-FOOTBALL_DATA_COMPETITION_ID = "2000"
-DB_PATH = "data/football.db"
-```
-
-8. Click **Deploy**.
-
-Wait 2–3 minutes. You'll get a live URL — open it on your phone and add to home screen.
-
-## Step 4 — After deploy
-
-- First load may take ~30s while it syncs fixtures automatically.
-- Tap **Sync & update data → Sync matches** if the list is empty.
-- Tap **Generate picks** to refresh predictions.
-
-## Updating the app later
-
-```bash
 git add .
 git commit -m "Update app"
 git push
 ```
 
-Streamlit Cloud redeploys automatically on each push.
+Render redeploys automatically on each push to `main`.
 
-## Important notes
+---
+
+## Free tier notes
 
 | Topic | Detail |
 |-------|--------|
-| Cost | Free on Streamlit Community Cloud |
-| API keys | Stored in Streamlit Secrets, never in GitHub |
-| Database | Resets on cold start; app auto-syncs on first visit |
-| Model | Uses heuristics until you tap **Retrain model** with enough finished matches |
+| **Cost** | Free web service |
+| **Sleep** | App sleeps after ~15 min idle; first load after sleep is slow |
+| **API keys** | Set in Render **Environment**, never in GitHub |
+| **Database** | SQLite resets on redeploy; app auto-syncs on first visit |
+| **Custom domain** | Optional in Render settings |
+
+---
 
 ## Troubleshooting
 
-- **App crashes on start** — check Secrets format (TOML, quoted strings).
-- **No matches** — verify `FOOTBALL_DATA_KEY` in Secrets; tap Sync matches.
-- **Deploy failed** — ensure `app.py` is at repo root and `requirements.txt` exists.
+| Problem | Fix |
+|---------|-----|
+| **Deploy failed** | Check Render logs → ensure `requirements.txt` installs cleanly |
+| **502 / not loading** | Wait 60s (cold start); check Start Command uses `$PORT` |
+| **No matches** | Verify `FOOTBALL_DATA_KEY` in Environment; tap Sync matches |
+| **Module not found** | Ensure repo root has `app.py` and `src/` folder |
+
+---
+
+## Local development
+
+```bash
+source .venv/bin/activate
+streamlit run app.py
+```
