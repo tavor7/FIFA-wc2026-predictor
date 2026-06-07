@@ -9,6 +9,12 @@ from typing import Any, Optional
 import numpy as np
 
 from src import config, db
+from src.team_profiles import (
+    get_team_prior,
+    normalize_team_name,
+    prior_form,
+    prior_to_goal_rates,
+)
 
 FEATURE_COLUMNS = [
     "elo_diff",
@@ -64,39 +70,52 @@ def _safe_mean(values: list[float], default: float) -> tuple[float, bool]:
 
 def _compute_form(team: str, before_date: str) -> tuple[float, bool]:
     """Points-based form over last 5 matches (win=1, draw=0.5, loss=0)."""
+    team = normalize_team_name(team)
     recent = db.get_team_recent_matches(team, before_date, limit=5)
-    if not recent:
-        return config.DEFAULT_FORM, True
+    if recent:
+        points: list[float] = []
+        for m in recent:
+            is_home = m["home_team"] == team
+            hg, ag = m["home_goals"], m["away_goals"]
+            if hg == ag:
+                points.append(0.5)
+            elif (is_home and hg > ag) or (not is_home and ag > hg):
+                points.append(1.0)
+            else:
+                points.append(0.0)
+        return float(np.mean(points)), False
 
-    points: list[float] = []
-    for m in recent:
-        is_home = m["home_team"] == team
-        hg, ag = m["home_goals"], m["away_goals"]
-        if hg == ag:
-            points.append(0.5)
-        elif (is_home and hg > ag) or (not is_home and ag > hg):
-            points.append(1.0)
-        else:
-            points.append(0.0)
-    return float(np.mean(points)), False
+    all_time = db.get_team_all_time_averages(team)
+    if all_time["matches"] >= 2:
+        return all_time["form"], False
+
+    attack, defense = get_team_prior(team)
+    return prior_form(attack, defense), True
 
 
 def _compute_goal_averages(
     team: str, before_date: str
 ) -> tuple[float, float, bool, bool]:
     """Return avg goals scored and conceded over last 5 matches."""
+    team = normalize_team_name(team)
     recent = db.get_team_recent_matches(team, before_date, limit=5)
-    if not recent:
-        return config.DEFAULT_GOALS, config.DEFAULT_GOALS, True, True
+    if recent:
+        scored, conceded = [], []
+        for m in recent:
+            is_home = m["home_team"] == team
+            scored.append(float(m["home_goals"] if is_home else m["away_goals"]))
+            conceded.append(float(m["away_goals"] if is_home else m["home_goals"]))
+        avg_scored, miss_s = _safe_mean(scored, config.DEFAULT_GOALS)
+        avg_conceded, miss_c = _safe_mean(conceded, config.DEFAULT_GOALS)
+        return avg_scored, avg_conceded, miss_s, miss_c
 
-    scored, conceded = [], []
-    for m in recent:
-        is_home = m["home_team"] == team
-        scored.append(float(m["home_goals"] if is_home else m["away_goals"]))
-        conceded.append(float(m["away_goals"] if is_home else m["home_goals"]))
-    avg_scored, miss_s = _safe_mean(scored, config.DEFAULT_GOALS)
-    avg_conceded, miss_c = _safe_mean(conceded, config.DEFAULT_GOALS)
-    return avg_scored, avg_conceded, miss_s, miss_c
+    all_time = db.get_team_all_time_averages(team)
+    if all_time["matches"] >= 2:
+        return all_time["scored"], all_time["conceded"], False, False
+
+    attack, defense = get_team_prior(team)
+    scored, conceded = prior_to_goal_rates(attack, defense)
+    return scored, conceded, True, True
 
 
 def _compute_rest_days(team: str, before_date: str) -> tuple[float, bool]:
@@ -200,16 +219,18 @@ def _red_card_risk(team: str, before_date: str) -> tuple[float, bool]:
 def build_features_for_match(match_row: Any) -> MatchFeatures:
     """Build full feature set for a single match."""
     match_id = int(match_row["id"])
-    home = match_row["home_team"]
-    away = match_row["away_team"]
+    home = normalize_team_name(match_row["home_team"])
+    away = normalize_team_name(match_row["away_team"])
     match_date = match_row["date"]
 
     mf = MatchFeatures(match_id=match_id, home_team=home, away_team=away)
     missing: dict[str, bool] = {}
 
-    # Elo placeholder
-    mf.features["elo_diff"] = 0.0
-    missing["elo_diff"] = True
+    # Elo proxy from pre-tournament strength priors
+    home_atk, home_def = get_team_prior(home)
+    away_atk, away_def = get_team_prior(away)
+    mf.features["elo_diff"] = (home_atk + home_def) - (away_atk + away_def)
+    missing["elo_diff"] = False
 
     form_home, miss_fh = _compute_form(home, match_date)
     form_away, miss_fa = _compute_form(away, match_date)

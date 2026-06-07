@@ -543,6 +543,8 @@ def _auto_bootstrap() -> None:
     st.session_state["bootstrapped"] = True
     if len(db.get_upcoming_matches(limit=1)) == 0:
         try:
+            from src.sync_historical import sync_historical_seasons
+            sync_historical_seasons()
             sync_all_matches()
             generate_predictions()
         except Exception:

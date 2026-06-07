@@ -462,6 +462,9 @@ def get_team_match_stats(match_id: int) -> list[sqlite3.Row]:
 
 def get_team_recent_matches(team: str, before_date: str, limit: int = 5) -> list[sqlite3.Row]:
     """Return recent finished matches involving a team before a given date."""
+    from src.team_profiles import normalize_team_name
+
+    team = normalize_team_name(team)
     with get_connection() as conn:
         return conn.execute(
             """
@@ -475,3 +478,44 @@ def get_team_recent_matches(team: str, before_date: str, limit: int = 5) -> list
             """,
             (team, team, before_date, limit),
         ).fetchall()
+
+
+def get_team_all_time_averages(team: str) -> dict[str, float]:
+    """Compute average goals scored/conceded and form from all finished matches in DB."""
+    from src.team_profiles import normalize_team_name
+
+    team = normalize_team_name(team)
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM matches
+            WHERE (home_team = ? OR away_team = ?)
+              AND status IN ('FT', 'AET', 'PEN', 'FINISHED')
+              AND home_goals IS NOT NULL
+            """,
+            (team, team),
+        ).fetchall()
+
+    if not rows:
+        return {"matches": 0, "scored": 0.0, "conceded": 0.0, "form": 0.5}
+
+    scored, conceded, points = [], [], []
+    for m in rows:
+        is_home = m["home_team"] == team
+        hg, ag = int(m["home_goals"]), int(m["away_goals"])
+        scored.append(float(hg if is_home else ag))
+        conceded.append(float(ag if is_home else hg))
+        if hg == ag:
+            points.append(0.5)
+        elif (is_home and hg > ag) or (not is_home and ag > hg):
+            points.append(1.0)
+        else:
+            points.append(0.0)
+
+    n = len(rows)
+    return {
+        "matches": n,
+        "scored": sum(scored) / n,
+        "conceded": sum(conceded) / n,
+        "form": sum(points) / n,
+    }

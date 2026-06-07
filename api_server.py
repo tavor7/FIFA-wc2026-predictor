@@ -13,6 +13,7 @@ from src.predict import generate_predictions, retrain_and_predict
 from src.sync_injuries import sync_injuries
 from src.sync_live_data import sync_live_data
 from src.sync_matches import sync_all_matches
+from src.sync_historical import sync_historical_seasons
 
 AUTHOR = "Amit Tavor"
 DISCLAIMER = (
@@ -135,6 +136,10 @@ def sync_inj() -> dict[str, Any]:
 
 @app.post("/predictions/generate")
 def gen_predictions() -> dict[str, Any]:
+    """Regenerate predictions for all upcoming matches."""
+    # Ensure historical context exists for team differentiation
+    if len(db.get_all_finished_matches()) < 10:
+        sync_historical_seasons()
     return generate_predictions()
 
 
@@ -145,9 +150,17 @@ def retrain() -> dict[str, Any]:
 
 @app.post("/bootstrap")
 def bootstrap() -> dict[str, Any]:
-    """Sync matches and generate predictions if DB is empty."""
-    if len(db.get_upcoming_matches(limit=1)) == 0:
-        sync_result = sync_all_matches()
-        pred_result = generate_predictions()
-        return {"bootstrapped": True, "sync": sync_result, "predictions": pred_result}
-    return {"bootstrapped": False, "message": "Data already present"}
+    """Sync fixtures, historical data, and regenerate all predictions."""
+    result: dict[str, Any] = {}
+
+    if len(db.get_all_finished_matches()) < 10:
+        result["historical"] = sync_historical_seasons()
+
+    result["sync"] = sync_all_matches()
+    result["predictions"] = generate_predictions()
+    result["stats"] = {
+        "upcoming": len(db.get_upcoming_matches(limit=200)),
+        "finished": len(db.get_all_finished_matches()),
+        "predictions": len(db.get_all_predictions()),
+    }
+    return result

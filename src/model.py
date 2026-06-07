@@ -109,21 +109,23 @@ class GoalPredictionModel:
         """Simple heuristic when ML model is unavailable."""
         f = mf.features
         home_lambda = (
-            0.35 * f.get("avg_goals_scored_home_last_5", config.DEFAULT_GOALS)
-            + 0.25 * (1.0 - f.get("avg_goals_conceded_away_last_5", config.DEFAULT_GOALS) / 3)
+            0.30 * f.get("avg_goals_scored_home_last_5", config.DEFAULT_GOALS)
+            + 0.22 * (1.0 - f.get("avg_goals_conceded_away_last_5", config.DEFAULT_GOALS) / 3)
             + 0.15 * f.get("recent_form_home", config.DEFAULT_FORM)
             + 0.10 * f.get("starting_xi_strength_home", 0.55)
             + 0.10 * f.get("home_advantage", config.HOME_ADVANTAGE)
+            + 0.08 * max(f.get("elo_diff", 0), 0)
             - 0.05 * f.get("injured_key_players_home_score", 0)
         )
         away_lambda = (
-            0.35 * f.get("avg_goals_scored_away_last_5", config.DEFAULT_GOALS)
-            + 0.25 * (1.0 - f.get("avg_goals_conceded_home_last_5", config.DEFAULT_GOALS) / 3)
+            0.30 * f.get("avg_goals_scored_away_last_5", config.DEFAULT_GOALS)
+            + 0.22 * (1.0 - f.get("avg_goals_conceded_home_last_5", config.DEFAULT_GOALS) / 3)
             + 0.15 * f.get("recent_form_away", config.DEFAULT_FORM)
             + 0.10 * f.get("starting_xi_strength_away", 0.55)
+            + 0.08 * max(-f.get("elo_diff", 0), 0)
             - 0.05 * f.get("injured_key_players_away_score", 0)
         )
-        return max(home_lambda, 0.3), max(away_lambda, 0.3)
+        return max(home_lambda, 0.35), max(away_lambda, 0.35)
 
     @staticmethod
     def scoreline_distribution(
