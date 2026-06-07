@@ -127,7 +127,7 @@ export async function pageTeam(slug) {
 
   const squadNote =
     data.squad_source === "fc26"
-      ? `<p class="section-note">Squad ratings from EA FC 26. Thin squads may include extra players from the live API.</p>`
+      ? `<p class="section-note">Squad ratings from Kaggle FC 26. Nations with fewer than 26 players in the dataset are topped up from API-Football.</p>`
       : "";
   const squadSection = section(
     "Squad",
@@ -317,7 +317,7 @@ export async function pagePlayers() {
 
   return disclaimerHtml(true) +
     `<h2 class="page-title">Player leaders</h2>
-    <p class="page-intro">Squad ratings from <strong>EA FC 26</strong> (game data). Goals and assists fill in during the World Cup from live match sync.</p>` +
+    <p class="page-intro">Squad ratings from <strong>Kaggle FC 26</strong> (<a href="https://www.kaggle.com/datasets/rovnez/fc-26-fifa-26-player-data" target="_blank" rel="noopener">rovnez dataset</a>). Goals and assists fill in during the World Cup from live match sync.</p>` +
     renderBoard("Top scorers", data.top_scorers, "goals") +
     renderBoard("Top assists", data.top_assists, "assists") +
     renderBoard(data.ratings_source === "fc26" ? "Top squad ratings (FC26)" : "Top ratings", data.top_ratings, "rating");

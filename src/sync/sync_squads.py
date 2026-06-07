@@ -78,8 +78,10 @@ def _tournament_team_api_map() -> dict[int, str]:
 def sync_squads(
     client: Optional[APIClient] = None,
     season: Optional[int] = None,
+    *,
+    fill_thin_squads: bool = False,
 ) -> dict[str, Any]:
-    """Fetch squad data for WC 2026 teams and fill gaps where FC26 data is thin."""
+    """Fetch squad data for WC 2026 teams and fill gaps where Kaggle FC26 data is thin."""
     client = client or APIClient()
     season = season if season is not None else config.SEASON
 
@@ -94,7 +96,11 @@ def sync_squads(
     for api_team_id, team_name in team_map.items():
         try:
             internal_team_id = dbx.upsert_team(team_name, api_team_id=api_team_id)
-            if dbx.count_fc26_players_for_team(internal_team_id) >= FULL_SQUAD_SIZE:
+            fc26_count = dbx.count_fc26_players_for_team(internal_team_id)
+            if fc26_count >= FULL_SQUAD_SIZE:
+                teams_skipped += 1
+                continue
+            if not fill_thin_squads and fc26_count >= 15:
                 teams_skipped += 1
                 continue
             raw_players = client.get_players(api_team_id, season=season)

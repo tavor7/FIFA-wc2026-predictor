@@ -73,7 +73,8 @@ class DataSyncService:
 
     def sync_team_stats(self) -> dict[str, Any]:
         fc26 = self.ensure_fc26_squads()
-        result = sync_squads()
+        # Kaggle has <26 players for some nations — API fills the rest
+        result = sync_squads(fill_thin_squads=True)
         ext.upsert_data_freshness("team_stats", 100.0, source="api-football")
         ext.upsert_data_freshness("player_stats", 90.0, source="api-football")
         _log_sync("sync_team_stats", result)

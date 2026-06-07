@@ -7,22 +7,23 @@ from pathlib import Path
 from typing import Any, Optional
 
 import pandas as pd
-import requests
 
-from src import config, db
+from src import db
 from src import db_extended as dbx
 from src.seed.fc26_columns import FC26_CSV_USECOLS
-from src.seed.load_seeds import SEED_DIR, _load_json
+from src.seed.kaggle_fc26 import (
+    KAGGLE_DATASET,
+    KAGGLE_DATASET_URL,
+    download_kaggle_fc26_csv,
+    kaggle_credentials_configured,
+)
 from src.seed.nationality_map import nationality_to_team
 from src.team_flags import get_country_code, slugify
 from src.team_names import normalize_team_name
 
 logger = logging.getLogger(__name__)
 
-FC26_CSV_PATH = SEED_DIR / "fc26_players.csv"
-FC26_CSV_URL = (
-    "https://raw.githubusercontent.com/ismailoksuz/EAFC26-DataHub/main/data/players.csv"
-)
+FC26_CSV_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "seeds" / "fc26_players.csv"
 FC26_ID_OFFSET = 260_000_000
 SQUAD_SIZE = 26
 
@@ -71,20 +72,27 @@ def _wc_team_names() -> set[str]:
 
 
 def ensure_fc26_csv(path: Path = FC26_CSV_PATH, *, allow_download: bool = True) -> Path:
-    """Use bundled FC26 CSV; download only when missing and allowed."""
+    """
+    Resolve FC26 CSV from bundled file or official Kaggle dataset.
+    Source: https://www.kaggle.com/datasets/rovnez/fc-26-fifa-26-player-data
+    """
     if path.is_file() and path.stat().st_size > 1_000_000:
         return path
+
     if not allow_download:
         raise FileNotFoundError(
-            f"Bundled FC26 CSV missing at {path}. Commit data/seeds/fc26_players.csv to the repo."
+            f"Kaggle FC26 CSV missing at {path}. "
+            f"Bundle data/seeds/fc26_players.csv from {KAGGLE_DATASET_URL}"
         )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    logger.info("Downloading FC26 player data (~11MB)...")
-    resp = requests.get(FC26_CSV_URL, timeout=120)
-    resp.raise_for_status()
-    path.write_bytes(resp.content)
-    logger.info("Saved FC26 CSV to %s", path)
-    return path
+
+    if kaggle_credentials_configured():
+        return download_kaggle_fc26_csv(path)
+
+    raise FileNotFoundError(
+        f"Kaggle FC26 CSV not found at {path}. "
+        f"Download manually from {KAGGLE_DATASET_URL} "
+        f"or set KAGGLE_USERNAME + KAGGLE_KEY to auto-download."
+    )
 
 
 def _resolve_team_id(team_name: str) -> int:
@@ -146,8 +154,8 @@ def import_fc26_players(
     download: bool = True,
 ) -> dict[str, Any]:
     """
-    Load Kaggle / SoFIFA FC26 ratings for WC 2026 national teams.
-    Uses short_name for display and six face stats for squad detail.
+    Load Kaggle FC26 ratings for WC 2026 national teams.
+    Dataset: rovnez/fc-26-fifa-26-player-data (110 columns, ~18k players).
     """
     db.init_db()
     path = csv_path or FC26_CSV_PATH
@@ -156,8 +164,7 @@ def import_fc26_players(
 
     if not path.is_file():
         raise FileNotFoundError(
-            f"FC26 CSV not found at {path}. "
-            "Download from Kaggle or run with download=True."
+            f"FC26 CSV not found at {path}. Source: {KAGGLE_DATASET_URL}"
         )
 
     wc_teams = _wc_team_names()
@@ -171,11 +178,15 @@ def import_fc26_players(
     removed = _clear_fc26_players()
     written = 0
     teams_touched: set[str] = set()
+    thin_teams: list[str] = []
 
     for team_name, group in df.groupby("team"):
         team_id = _resolve_team_id(team_name)
         teams_touched.add(team_name)
-        for _, row in group.head(squad_size).iterrows():
+        squad = group.head(squad_size)
+        if len(squad) < squad_size:
+            thin_teams.append(team_name)
+        for _, row in squad.iterrows():
             pid = int(row["player_id"])
             kwargs = _row_to_player_kwargs(row)
             dbx.upsert_player(
@@ -192,14 +203,19 @@ def import_fc26_players(
         records_affected=written,
     )
     return {
-        "source": "EA FC 26 (Kaggle / SoFIFA)",
+        "source": f"Kaggle: {KAGGLE_DATASET}",
+        "dataset_url": KAGGLE_DATASET_URL,
         "csv": str(path),
         "teams": len(teams_touched),
         "players_written": written,
         "players_removed": removed,
         "squad_size": squad_size,
+        "thin_teams": thin_teams,
         "fields_imported": list(FC26_CSV_USECOLS),
-        "note": "Game ratings for squads only; match goals/assists come from live sync during the tournament.",
+        "note": (
+            "Squad ratings from Kaggle FC26. Nations with <26 players in the dataset "
+            "are topped up from API-Football during pipeline sync."
+        ),
     }
 
 

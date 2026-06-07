@@ -451,7 +451,10 @@ def _data_feed_hints(keys: dict[str, Any], counts: dict[str, int]) -> list[str]:
     if not keys.get("any_configured"):
         hints.append("Set API_FOOTBALL_KEY and/or FOOTBALL_DATA_KEY in .env for live updates (players, events, injuries).")
     elif counts.get("players", 0) == 0:
-        hints.append("Run POST /seed/players to load EA FC 26 squad ratings (Kaggle dataset).")
+        hints.append(
+            "Run the full pipeline to load Kaggle FC26 squad ratings "
+            "(rovnez/fc-26-fifa-26-player-data)."
+        )
     if counts.get("standings", 0) == 0:
         hints.append("Run POST /seed to populate group standings from the official draw.")
     return hints
@@ -553,7 +556,7 @@ def evaluation_backtest(league: str = "World Cup", limit: int = 500) -> dict[str
 
 @router.post("/seed/players")
 def seed_players(bg: BackgroundTasks) -> dict[str, Any]:
-    """Import EA FC 26 player ratings for WC squads (Kaggle dataset)."""
+    """Import FC26 player ratings from Kaggle (rovnez/fc-26-fifa-26-player-data)."""
     from src.seed.import_fc26_players import import_fc26_players
 
     def _job() -> None:
