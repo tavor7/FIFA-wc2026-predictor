@@ -98,6 +98,7 @@ async function refreshData() {
   }
   showError(null);
   try {
+    await request("/seed", { method: "POST" }).catch(() => null);
     await request("/sync/full", { method: "POST" });
     await new Promise((r) => setTimeout(r, 2000));
     await navigate();

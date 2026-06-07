@@ -256,7 +256,7 @@ class APIClient:
                 f for f in fixtures
                 if (f.get("raw") or {}).get("league", {}).get("id") == config.LEAGUE_ID
             ]
-            return league_fixtures if league_fixtures else fixtures
+            return league_fixtures
         except APIError as exc:
             logger.warning("API-Football live failed: %s", exc)
             return []

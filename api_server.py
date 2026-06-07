@@ -19,6 +19,7 @@ from src import db
 from src.api.routes import router
 from src.model_storage import load_models_on_startup, save_models_after_train
 from src.scheduler import start_scheduler, stop_scheduler
+from src.seed.load_seeds import ensure_baseline_data
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,10 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI):
     db.init_db()
     load_models_on_startup()
+    try:
+        ensure_baseline_data(min_matches=10, run_predictions=True)
+    except Exception as exc:
+        logger.warning("Startup seed skipped: %s", exc)
     if ENABLE_SCHEDULER:
         start_scheduler()
         logger.info("Background scheduler enabled")

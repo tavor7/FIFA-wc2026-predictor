@@ -21,6 +21,8 @@ from src.sync_historical import sync_historical_seasons
 from src.sync_injuries import sync_injuries
 from src.sync_live_data import sync_live_data
 from src.sync_matches import sync_all_matches
+from src.bracket.knockout_view import build_knockout_view
+from src.seed.load_seeds import api_keys_status, ensure_baseline_data, load_all_seeds, table_counts
 from src.sync.sync_bracket import sync_bracket
 from src.config import SEASON
 from src.sync.sync_events import sync_events
@@ -41,6 +43,7 @@ router = APIRouter()
 
 
 def _run_full_sync() -> None:
+    ensure_baseline_data(min_matches=10, run_predictions=False)
     if len(db.get_all_finished_matches()) < 10:
         sync_historical_seasons()
     else:
@@ -259,6 +262,12 @@ def tournament_overview() -> dict[str, Any]:
     }
 
 
+@router.get("/tournament/knockout-bracket")
+def knockout_bracket_view() -> dict[str, Any]:
+    """Current-cup knockout view: round lists when scheduled, else next group matches."""
+    return build_knockout_view()
+
+
 @router.get("/tournament/bracket")
 def tournament_bracket() -> list[dict[str, Any]]:
     nodes = ext.get_bracket_nodes()
@@ -310,9 +319,13 @@ def reports_summary() -> dict[str, Any]:
 @router.get("/monitor/status")
 def monitor_status() -> dict[str, Any]:
     logs = ext.get_recent_sync_logs(limit=10)
+    keys = api_keys_status()
+    counts = table_counts()
     return {
         "database": db_backend(),
         "health": "ok",
+        "api_keys": keys,
+        "table_counts": counts,
         "recent_jobs": [row_to_dict(l) for l in logs],
         "stats": {
             "upcoming": len(db.get_upcoming_matches(limit=200)),
@@ -320,7 +333,21 @@ def monitor_status() -> dict[str, Any]:
             "teams": len(ext.get_all_teams()),
         },
         "models": {"ensemble": True, "elo": True, "xgboost_optional": True},
+        "hints": _data_feed_hints(keys, counts),
     }
+
+
+def _data_feed_hints(keys: dict[str, Any], counts: dict[str, int]) -> list[str]:
+    hints: list[str] = []
+    if counts.get("matches", 0) < 10:
+        hints.append("Run POST /seed to load bundled WC 2026 fixtures and group tables.")
+    if not keys.get("any_configured"):
+        hints.append("Set API_FOOTBALL_KEY and/or FOOTBALL_DATA_KEY in .env for live updates (players, events, injuries).")
+    elif counts.get("players", 0) == 0:
+        hints.append("Run POST /sync/full after setting API keys to load squads, events, and injuries.")
+    if counts.get("standings", 0) == 0:
+        hints.append("Run POST /seed to populate group standings from the official draw.")
+    return hints
 
 
 @router.post("/sync/historical")
@@ -363,6 +390,25 @@ def gen_predictions(bg: BackgroundTasks) -> dict[str, Any]:
 @router.post("/model/retrain")
 def retrain() -> dict[str, Any]:
     return retrain_and_predict()
+
+
+@router.post("/seed")
+def seed_database(force: bool = False) -> dict[str, Any]:
+    """Load bundled WC 2026 fixtures, groups, 2022 history, strength, and predictions."""
+    if force:
+        return load_all_seeds(run_predictions=True)
+    return ensure_baseline_data(min_matches=10, run_predictions=True)
+
+
+@router.get("/meta/data-status")
+def data_status() -> dict[str, Any]:
+    keys = api_keys_status()
+    counts = table_counts()
+    return {
+        "api_keys": keys,
+        "table_counts": counts,
+        "hints": _data_feed_hints(keys, counts),
+    }
 
 
 @router.post("/bootstrap")

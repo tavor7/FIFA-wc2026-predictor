@@ -1,8 +1,9 @@
 import { request } from "./api.js";
 import { teamBadgeHtml, teamLinkHtml, escapeHtml, slugify } from "./flags.js";
+import { renderKnockoutBracket } from "./knockout-bracket.js";
 import {
   disclaimerHtml, matchCardHtml, statsHtml, section, tableHtml,
-  timelineHtml, lineupsHtml, statsGridHtml, bracketHtml,
+  timelineHtml, lineupsHtml, statsGridHtml,
   factorChartHtml, renderFactorChart, simChartHtml, renderSimChart,
   liveProbChartHtml, renderLiveProbChart,
   formatDate,
@@ -186,7 +187,11 @@ export async function pageTournament() {
   const groups = data.standings || {};
   const sim = data.simulation;
 
-  let html = disclaimerHtml(true) + `<h2 class="page-title">Tournament overview</h2>`;
+  let html = disclaimerHtml(true) +
+    `<h2 class="page-title">Group stage standings</h2>
+    <div class="page-intro">Who leads each group (top 2 + 8 best 3rd places advance).
+    For the full <strong>fixture list</strong> and knockout rounds (once scheduled), open
+    <a href="#/bracket">Schedule</a>.</div>`;
 
   const groupKeys = Object.keys(groups).sort();
   if (groupKeys.length) {
@@ -217,10 +222,12 @@ export async function pageTournament() {
 }
 
 export async function pageBracket() {
-  const nodes = await request("/tournament/bracket");
+  const data = await request("/tournament/knockout-bracket");
+  const subtitle = data.has_knockout ? "Knockout stage" : "Group stage fixtures";
   return disclaimerHtml(true) +
-    `<h2 class="page-title">Knockout bracket</h2>` +
-    bracketHtml(nodes);
+    `<h2 class="page-title">${escapeHtml(data.title || "World Cup 2026")}</h2>
+    <p class="page-intro">${escapeHtml(subtitle)}</p>` +
+    renderKnockoutBracket(data);
 }
 
 export async function pagePlayers() {
@@ -299,14 +306,24 @@ export async function pageMonitor() {
     </tr>`
   );
 
+  const counts = status.table_counts || {};
+  const countRows = Object.entries(counts)
+    .filter(([, n]) => n >= 0)
+    .map(([t, n]) => `<tr><td>${escapeHtml(t)}</td><td><strong>${n}</strong></td></tr>`);
+
+  const hints = (status.hints || []).map((h) => `<li>${escapeHtml(h)}</li>`).join("");
+  const keys = status.api_keys || {};
+
   return disclaimerHtml(true) +
     `<h2 class="page-title">System monitor</h2>` +
     section("Health", `<div class="form-grid">
       <div class="form-card"><span>Database</span><strong>${escapeHtml(status.database || "—")}</strong></div>
       <div class="form-card"><span>Status</span><strong class="status-ok">${escapeHtml(status.health || "ok")}</strong></div>
-      <div class="form-card"><span>Ensemble</span><strong>${status.models?.ensemble ? "Active" : "—"}</strong></div>
-      <div class="form-card"><span>Elo</span><strong>${status.models?.elo ? "Active" : "—"}</strong></div>
+      <div class="form-card"><span>API-Football key</span><strong>${keys.api_football ? "Set" : "Missing"}</strong></div>
+      <div class="form-card"><span>football-data key</span><strong>${keys.football_data ? "Set" : "Missing"}</strong></div>
     </div>`) +
+    (hints ? section("Next steps", `<ul>${hints}</ul>`) : "") +
+    section("Table rows", tableHtml(["Table", "Rows"], countRows.length ? countRows : [`<tr><td colspan="2">No counts</td></tr>`])) +
     section("Stats", statsHtml(status.stats || {})) +
     section("Recent sync jobs", tableHtml(["Job", "Status", "Records", "Finished"], jobs.length ? jobs : [`<tr><td colspan="4">No jobs logged yet</td></tr>`])) +
     section("Data freshness", tableHtml(["Entity", "Complete", "Source", "Updated"], entities.length ? entities : [`<tr><td colspan="4">No freshness data</td></tr>`]));

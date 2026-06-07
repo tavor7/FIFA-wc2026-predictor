@@ -949,6 +949,53 @@ main .card + .section {
   font-size: 0.9rem;
 }
 
+/* ── Knockout page (current cup) ── */
+.page-intro {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: -0.5rem 0 1.25rem;
+  line-height: 1.5;
+}
+
+.page-intro a {
+  color: var(--accent);
+}
+
+.ko-status {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.92rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.ko-hint {
+  color: var(--muted);
+  font-size: 0.86rem;
+  margin: 0 0 1.25rem;
+  line-height: 1.5;
+}
+
+.ko-hint a {
+  color: var(--accent);
+}
+
+.ko-day {
+  margin-bottom: 1.25rem;
+}
+
+.ko-day-title {
+  margin: 0 0 0.65rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--gold);
+  letter-spacing: 0.02em;
+}
+
 .freshness-bar {
   padding: 0 1.25rem;
   margin-top: 0.75rem;
