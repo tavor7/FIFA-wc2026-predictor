@@ -1,12 +1,15 @@
-"""FastAPI REST backend for the Expo mobile app."""
+"""FastAPI REST backend and web UI for WC 2026 predictor."""
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from src import db
 from src.db import db_backend
@@ -21,6 +24,9 @@ DISCLAIMER = (
     "For educational and research purposes only. Not betting or financial advice. "
     "Not affiliated with FIFA. Use at your own discretion."
 )
+
+WEB_DIR = Path(__file__).resolve().parent / "web"
+STATIC_DIR = WEB_DIR / "static"
 
 app = FastAPI(
     title="WC 2026 Research API",
@@ -37,6 +43,9 @@ app.add_middleware(
 )
 
 db.init_db()
+
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 def _row(row) -> dict[str, Any]:
@@ -63,7 +72,6 @@ def _match_with_prediction(row) -> dict[str, Any]:
     return m
 
 
-@app.get("/")
 @app.get("/health")
 def health() -> dict[str, str]:
     return {
@@ -72,6 +80,15 @@ def health() -> dict[str, str]:
         "disclaimer": DISCLAIMER,
         "database": db_backend(),
     }
+
+
+@app.get("/")
+def web_app() -> FileResponse:
+    """Serve the web UI (matches, live, results)."""
+    index = WEB_DIR / "index.html"
+    if not index.is_file():
+        raise HTTPException(status_code=404, detail="Web UI not found")
+    return FileResponse(index)
 
 
 @app.get("/meta")
@@ -123,7 +140,7 @@ def match_detail(match_id: int) -> dict[str, Any]:
 
 @app.post("/sync/matches")
 def sync_matches() -> dict[str, Any]:
-    return sync_all_matches()
+    return sync_all_matches(days_ahead=120, days_back=30)
 
 
 @app.post("/sync/live")

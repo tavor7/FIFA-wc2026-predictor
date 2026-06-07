@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WC 2026 Predictor — Amit Tavor</title>
+    <meta
+      name="description"
+      content="FIFA World Cup 2026 research predictions. Educational use only."
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="header">
+        <div class="header-top">
+          <div>
+            <p class="eyebrow">Research only · Not betting advice</p>
+            <h1>WC 2026 Predictor</h1>
+          </div>
+          <button id="btn-refresh" class="btn-refresh" type="button">Refresh data</button>
+        </div>
+        <nav class="tabs" aria-label="Sections">
+          <button class="tab active" data-tab="matches" type="button">Matches</button>
+          <button class="tab" data-tab="live" type="button">Live</button>
+          <button class="tab" data-tab="results" type="button">Results</button>
+        </nav>
+      </header>
+
+      <main id="main">
+        <div id="loading" class="loading hidden">
+          <div class="spinner"></div>
+          <p>Loading…</p>
+        </div>
+        <div id="error" class="error-box hidden"></div>
+        <div id="content"></div>
+      </main>
+
+      <footer class="footer">
+        <p>Designed by <strong>Amit Tavor</strong></p>
+        <p class="footer-note">
+          For educational and research purposes only. Not betting or financial advice. Not
+          affiliated with FIFA.
+        </p>
+      </footer>
+    </div>
+
+    <dialog id="match-modal" class="modal">
+      <div class="modal-inner">
+        <button id="modal-close" class="modal-close" type="button" aria-label="Close">×</button>
+        <div id="modal-body"></div>
+      </div>
+    </dialog>
+
+    <script src="/static/app.js" type="module"></script>
+  </body>
+</html>
