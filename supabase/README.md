@@ -19,14 +19,26 @@ You should see “Success” with tables: `matches`, `predictions`, `injuries`, 
 
 ## Step 3 — Get connection string
 
-1. **Project Settings** → **Database**
-2. Under **Connection string**, choose **URI**
-3. Select **Transaction pooler** (recommended for Render) or **Direct connection**
-4. Copy the URL — it looks like:
+> **Render users:** use **Shared Pooler**, NOT **Dedicated Pooler**.
+> Dedicated Pooler (`db.xxxxx.supabase.co:6543`) is IPv6-only and fails on Render with:
+> `Network is unreachable` / connection to `2406:...` port 6543.
+
+1. Supabase dashboard → **Connect** (top bar) or **Project Settings** → **Database**
+2. Open the **Shared Pooler** tab (not Dedicated Pooler)
+3. Mode: **Transaction** (port **6543**)
+4. Copy the **URI** — it looks like:
 
 ```
 postgresql://postgres.xxxxx:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres
 ```
+
+Note the differences from Dedicated Pooler:
+
+| | Shared Pooler (Render) | Dedicated Pooler (local Mac only) |
+|--|------------------------|-----------------------------------|
+| Host | `aws-0-....pooler.supabase.com` | `db.xxxxx.supabase.co` |
+| User | `postgres.xxxxx` | `postgres` |
+| IPv4 on Render | Yes | No |
 
 Replace `[YOUR-PASSWORD]` with your actual database password.
 
@@ -90,7 +102,8 @@ DATABASE_URL=postgresql://postgres.xxxxx:password@...pooler.supabase.com:6543/po
 
 | Problem | Fix |
 |---------|-----|
-| `connection refused` | Check password in URL, use pooler string |
+| `Network is unreachable` / IPv6 `2406:...` | Switch to **Shared Pooler** URI (see Step 3) |
+| `connection refused` | Check password in URL, use Shared Pooler string |
 | `relation does not exist` | Run `schema.sql` in Supabase SQL Editor |
 | `database: sqlite` on Render | `DATABASE_URL` not set in Render env |
 | SSL errors | Add `?sslmode=require` to connection string if needed |

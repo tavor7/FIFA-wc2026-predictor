@@ -188,10 +188,13 @@ def upsert_match(
 ) -> int:
     """Insert or update a match row; return internal match id."""
     now = datetime.utcnow().isoformat()
+    # Postgres requires table-qualified column names in ON CONFLICT UPDATE
+    existing_home_id = "matches.home_team_id" if config.USE_POSTGRES else "home_team_id"
+    existing_away_id = "matches.away_team_id" if config.USE_POSTGRES else "away_team_id"
     with get_connection() as conn:
         _execute(
             conn,
-            """
+            f"""
             INSERT INTO matches (
                 external_fixture_id, date, league, season,
                 home_team, away_team, home_team_id, away_team_id,
@@ -203,8 +206,8 @@ def upsert_match(
                 season=excluded.season,
                 home_team=excluded.home_team,
                 away_team=excluded.away_team,
-                home_team_id=COALESCE(excluded.home_team_id, home_team_id),
-                away_team_id=COALESCE(excluded.away_team_id, away_team_id),
+                home_team_id=COALESCE(excluded.home_team_id, {existing_home_id}),
+                away_team_id=COALESCE(excluded.away_team_id, {existing_away_id}),
                 status=excluded.status,
                 home_goals=excluded.home_goals,
                 away_goals=excluded.away_goals,

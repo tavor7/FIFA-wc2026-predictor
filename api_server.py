@@ -158,7 +158,8 @@ def bootstrap() -> dict[str, Any]:
     if len(db.get_all_finished_matches()) < 10:
         result["historical"] = sync_historical_seasons()
 
-    result["sync"] = sync_all_matches()
+    # World Cup schedule spans months; 14 days is too narrow for football-data fallback
+    result["sync"] = sync_all_matches(days_ahead=120, days_back=30)
     result["predictions"] = generate_predictions()
     result["stats"] = {
         "upcoming": len(db.get_upcoming_matches(limit=200)),
