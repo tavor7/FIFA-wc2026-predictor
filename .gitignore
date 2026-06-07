@@ -9,3 +9,8 @@ data/football.db
 data/models/
 .streamlit/secrets.toml
 *.joblib
+
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/.env

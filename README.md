@@ -51,30 +51,40 @@ SEASON=2026
 DB_PATH=data/football.db
 ```
 
-## Run on your phone (remote)
+## Run on your phone (Expo — recommended)
 
-Deploy on **[Render](https://render.com)** for a public URL that works anywhere.
+The mobile app lives in `mobile/` and uses **Expo** for a native feel on iOS/Android.
 
-Repo: [github.com/tavor7/FIFA-wc2026-predictor](https://github.com/tavor7/FIFA-wc2026-predictor)
+1. Deploy the **FastAPI backend** on Render (see [DEPLOY.md](DEPLOY.md))
+2. Install and run Expo:
 
-**Quick steps:**
+```bash
+cd mobile
+npm install
+cp .env.example .env   # set EXPO_PUBLIC_API_URL to your Render API URL
+npm start
+```
 
-1. Go to [dashboard.render.com](https://dashboard.render.com) → sign in with GitHub.
-2. **New +** → **Blueprint** → select `tavor7/FIFA-wc2026-predictor`.
-3. Set secret env vars: `API_FOOTBALL_KEY`, `FOOTBALL_DATA_KEY` (from your `.env`).
-4. Deploy → open the Render URL on your phone.
+3. Scan the QR code with **Expo Go** on your phone — works from anywhere.
 
-Full instructions: see **[DEPLOY.md](DEPLOY.md)**.
-
-> Free tier sleeps when idle; first load after sleep may take ~30–60s. The app auto-syncs fixtures on first visit.
+Full mobile docs: [mobile/README.md](mobile/README.md)
 
 ## Local development
 
+**API backend:**
+```bash
+uvicorn api_server:app --reload --port 8000
+```
+
+**Expo app:**
+```bash
+cd mobile && npm start
+```
+
+**Legacy Streamlit UI (optional):**
 ```bash
 streamlit run app.py
 ```
-
-Open the URL shown in the terminal (typically `http://localhost:8501`).
 
 ## Dashboard Actions
 

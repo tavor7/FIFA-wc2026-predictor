@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "WC 2026 Predictor",
+    "slug": "wc2026-predictor",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "wc2026",
+    "splash": {
+      "backgroundColor": "#09090B"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.amittavor.wc2026predictor"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#09090B"
+      },
+      "package": "com.amittavor.wc2026predictor"
+    },
+    "plugins": ["expo-router"],
+    "extra": {
+      "author": "Amit Tavor",
+      "disclaimer": "For educational and research purposes only. Not betting advice."
+    }
+  }
+}

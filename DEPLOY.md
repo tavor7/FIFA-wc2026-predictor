@@ -1,89 +1,83 @@
-# Render.com deployment — https://fifa-wc2026-predictor.onrender.com (your URL will differ)
+# Deploy remotely (Render + Expo)
 
-> **Research only.** Designed by **Amit Tavor**. For educational use — not betting advice. See [DISCLAIMER.md](DISCLAIMER.md).
+> **Research only.** Designed by **Amit Tavor**. See [DISCLAIMER.md](DISCLAIMER.md).
 
-Deploy the app so it works on your phone from anywhere, not only on local WiFi.
+Architecture:
+
+```
+Phone (Expo app)  →  Render (FastAPI API)  →  SQLite + football APIs
+```
+
+---
+
+## Step 1 — Deploy the API on Render
 
 Repo: [github.com/tavor7/FIFA-wc2026-predictor](https://github.com/tavor7/FIFA-wc2026-predictor)
 
----
+1. [dashboard.render.com](https://dashboard.render.com) → **New +** → **Blueprint**
+2. Select your repo (uses `render.yaml`)
+3. Set secret env vars: `API_FOOTBALL_KEY`, `FOOTBALL_DATA_KEY`
+4. Deploy → copy your API URL, e.g. `https://fifa-wc2026-api.onrender.com`
 
-## Option A — Blueprint (easiest)
+Test: open `https://YOUR-API.onrender.com/health`
 
-1. Go to [dashboard.render.com](https://dashboard.render.com) and sign in with **GitHub**.
-2. Click **New +** → **Blueprint**.
-3. Connect repo **`tavor7/FIFA-wc2026-predictor`**.
-4. Render detects `render.yaml` — click **Apply**.
-5. When prompted, set these **secret** environment variables:
-   - `API_FOOTBALL_KEY` — from your local `.env`
-   - `FOOTBALL_DATA_KEY` — from your local `.env`
-6. Wait 5–10 minutes for the first deploy.
+> If you already deployed Streamlit on Render, **update the Start Command** to:
+> `uvicorn api_server:app --host 0.0.0.0 --port $PORT`
 
 ---
 
-## Option B — Manual Web Service
-
-1. [dashboard.render.com](https://dashboard.render.com) → **New +** → **Web Service**.
-2. Connect **`tavor7/FIFA-wc2026-predictor`**.
-3. Settings:
-
-| Field | Value |
-|-------|--------|
-| **Name** | `fifa-wc2026-predictor` |
-| **Region** | closest to you |
-| **Branch** | `main` |
-| **Runtime** | Python 3 |
-| **Build Command** | `pip install -r requirements.txt` |
-| **Start Command** | `streamlit run app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false` |
-| **Plan** | Free |
-
-4. **Environment** → add variables:
-
-| Key | Value |
-|-----|--------|
-| `PYTHON_VERSION` | `3.11.9` |
-| `API_FOOTBALL_KEY` | your key |
-| `FOOTBALL_DATA_KEY` | your key |
-| `LEAGUE_ID` | `1` |
-| `SEASON` | `2026` |
-| `FOOTBALL_DATA_COMPETITION_ID` | `2000` |
-| `DB_PATH` | `data/football.db` |
-
-5. Click **Create Web Service**.
-
----
-
-## After deploy
-
-1. Open your Render URL on your phone (e.g. `https://fifa-wc2026-predictor.onrender.com`).
-2. **First visit may take 30–60s** — free tier wakes from sleep.
-3. If matches are empty: **Sync & update data → Sync matches → Generate picks**.
-4. Bookmark or **Add to Home Screen** on your phone.
-
----
-
-## Updating the app
+## Step 2 — Run Expo on your phone
 
 ```bash
-cd /Users/amit/Desktop/AMIT/DataScience/S8/FIFA/football_research_predictor
-git add .
-git commit -m "Update app"
-git push
+cd mobile
+npm install
+cp .env.example .env
 ```
 
-Render redeploys automatically on each push to `main`.
+Edit `.env`:
+
+```env
+EXPO_PUBLIC_API_URL=https://fifa-wc2026-api.onrender.com
+```
+
+Start:
+
+```bash
+npm start
+```
+
+Scan QR with **Expo Go** — works from anywhere, not just local WiFi.
 
 ---
 
-## Free tier notes
+## Step 3 — Pull to refresh
 
-| Topic | Detail |
-|-------|--------|
-| **Cost** | Free web service |
-| **Sleep** | App sleeps after ~15 min idle; first load after sleep is slow |
-| **API keys** | Set in Render **Environment**, never in GitHub |
-| **Database** | SQLite resets on redeploy; app auto-syncs on first visit |
-| **Custom domain** | Optional in Render settings |
+On the **Matches** tab, pull down to sync fixtures and regenerate predictions.
+
+---
+
+## Optional — Standalone app (no Expo Go)
+
+```bash
+cd mobile
+npx eas build --platform ios    # or android
+```
+
+Requires free [expo.dev](https://expo.dev) account.
+
+---
+
+## Local development
+
+**Terminal 1 — API:**
+```bash
+uvicorn api_server:app --reload --port 8000
+```
+
+**Terminal 2 — Expo:**
+```bash
+cd mobile && npm start
+```
 
 ---
 
@@ -91,16 +85,7 @@ Render redeploys automatically on each push to `main`.
 
 | Problem | Fix |
 |---------|-----|
-| **Deploy failed** | Check Render logs → ensure `requirements.txt` installs cleanly |
-| **502 / not loading** | Wait 60s (cold start); check Start Command uses `$PORT` |
-| **No matches** | Verify `FOOTBALL_DATA_KEY` in Environment; tap Sync matches |
-| **Module not found** | Ensure repo root has `app.py` and `src/` folder |
-
----
-
-## Local development
-
-```bash
-source .venv/bin/activate
-streamlit run app.py
-```
+| App can't connect | Check `EXPO_PUBLIC_API_URL` in `mobile/.env` |
+| API 502 / slow | Render free tier cold start — wait 60s |
+| Empty matches | Open API `/bootstrap` or pull to refresh in app |
+| Streamlit still running | Render now uses FastAPI; redeploy from latest `render.yaml` |
