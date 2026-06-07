@@ -22,10 +22,15 @@ def _wc_filter_params() -> list[Any]:
     return [WC_LEAGUE_LIKE, config.SEASON]
 
 
+def _normalize_db_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql://", 1)
+    return url
+
+
 def _postgres_pool() -> Any:
     global _pg_pool
     if _pg_pool is None:
-        import psycopg
         from psycopg.rows import dict_row
         from psycopg_pool import ConnectionPool
 
@@ -39,17 +44,18 @@ def _postgres_pool() -> Any:
     return _pg_pool
 
 
+def close_postgres_pool() -> None:
+    global _pg_pool
+    if _pg_pool is not None:
+        _pg_pool.close()
+        _pg_pool = None
+
+
 def _adapt_sql(sql: str) -> str:
     """Convert SQLite-style ? placeholders to PostgreSQL %s when needed."""
     if config.USE_POSTGRES:
         return sql.replace("?", "%s")
     return sql
-
-
-def _normalize_db_url(url: str) -> str:
-    if url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql://", 1)
-    return url
 
 
 def _ensure_db_dir() -> None:
@@ -1036,7 +1042,6 @@ def get_platform_stats(tournament_only: bool = True) -> dict[str, int]:
     """
     live_where = f"status IN ({live_ph}){wc_match}"
 
-    # One query — avoids 4× latency to remote Supabase
     params = wc_params + list(live_statuses) + wc_params
     with get_connection() as conn:
         row = _execute(
@@ -1056,6 +1061,73 @@ def get_platform_stats(tournament_only: bool = True) -> dict[str, int]:
         "live": int(d["live"]),
         "predictions": int(d["predictions"]),
         "teams": int(d["teams"]),
+    }
+
+
+def get_home_feed(limit: int = 48, tournament_only: bool = True) -> dict[str, Any]:
+    """Stats + upcoming matches + predictions in one pooled connection."""
+    wc = WC_FILTER_SQL if tournament_only else ""
+    wc_params = _wc_filter_params() if tournament_only else []
+    match_params: list[Any] = list(wc_params) + [limit] if tournament_only else [limit]
+    live_statuses = ("1H", "2H", "HT", "ET", "BT", "P", "LIVE", "IN_PLAY", "PAUSED")
+    live_ph = ",".join("?" * len(live_statuses))
+    upcoming_where = f"""
+        (
+            status IN ('NS', 'TBD', 'SCHEDULED', 'TIMED', 'Not Started')
+            OR (status NOT IN ('FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO')
+                AND home_goals IS NULL)
+        ){wc}
+    """
+    live_where = f"status IN ({live_ph}){wc}"
+    stats_params = wc_params + list(live_statuses) + wc_params
+
+    with get_connection() as conn:
+        stats_row = _execute(
+            conn,
+            f"""
+            SELECT
+                (SELECT COUNT(*) FROM matches WHERE {upcoming_where}) AS upcoming,
+                (SELECT COUNT(*) FROM matches WHERE {live_where}) AS live,
+                (SELECT COUNT(*) FROM predictions) AS predictions,
+                (SELECT COUNT(*) FROM teams) AS teams
+            """,
+            stats_params,
+        ).fetchone()
+        match_rows = _execute(
+            conn,
+            f"""
+            SELECT * FROM matches
+            WHERE (
+                status IN ('NS', 'TBD', 'SCHEDULED', 'TIMED', 'Not Started')
+                OR (status NOT IN ('FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO')
+                    AND home_goals IS NULL)
+            ){wc}
+            ORDER BY date ASC
+            LIMIT ?
+            """,
+            match_params,
+        ).fetchall()
+        ids = [int(dict(r)["id"]) for r in match_rows]
+        pred_map: dict[int, Row] = {}
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            for row in _execute(
+                conn,
+                f"SELECT * FROM predictions WHERE match_id IN ({placeholders})",
+                ids,
+            ).fetchall():
+                pred_map[int(dict(row)["match_id"])] = row
+
+    sd = dict(stats_row)
+    return {
+        "stats": {
+            "upcoming": int(sd["upcoming"]),
+            "live": int(sd["live"]),
+            "predictions": int(sd["predictions"]),
+            "teams": int(sd["teams"]),
+        },
+        "matches": match_rows,
+        "predictions": pred_map,
     }
 
 

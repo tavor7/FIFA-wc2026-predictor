@@ -73,7 +73,6 @@ def _list_prediction_dict(p: dict[str, Any]) -> dict[str, Any]:
 
 
 def matches_with_predictions(rows: list) -> list[dict[str, Any]]:
-    """Attach stored predictions in one batch query (for list endpoints)."""
     match_rows = [row_to_dict(r) for r in rows if r]
     if not match_rows:
         return []
@@ -88,6 +87,22 @@ def matches_with_predictions(rows: list) -> list[dict[str, Any]]:
         m["away"] = team_meta(m["away_team"])
         out.append(m)
     return out
+
+
+def home_dashboard(limit: int = 48) -> dict[str, Any]:
+    """Single-request home page payload."""
+    feed = db.get_home_feed(limit=limit)
+    pred_map = {mid: dict(r) for mid, r in feed["predictions"].items()}
+    match_rows = [row_to_dict(r) for r in feed["matches"]]
+    out: list[dict[str, Any]] = []
+    for m in match_rows:
+        pred = pred_map.get(int(m["id"]))
+        if pred:
+            m["prediction"] = _list_prediction_dict(pred)
+        m["home"] = team_meta(m["home_team"])
+        m["away"] = team_meta(m["away_team"])
+        out.append(m)
+    return {"stats": feed["stats"], "matches": out}
 
 
 def match_with_prediction(row) -> dict[str, Any]:

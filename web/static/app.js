@@ -80,12 +80,13 @@ async function navigate() {
   showLoading(true);
   content.innerHTML = "";
   try {
-    content.innerHTML = await handler(match);
+    const html = await handler(match);
+    content.innerHTML = html;
+    showLoading(false);
     void updateFreshnessBar();
   } catch (e) {
     showError(e.message || "Failed to load page");
     content.innerHTML = "";
-  } finally {
     showLoading(false);
   }
 }

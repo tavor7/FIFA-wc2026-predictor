@@ -14,7 +14,7 @@ from src import db
 from src import db_extended as ext
 from src.analytics.momentum import MomentumEngine
 from src.analytics.team_form import TeamFormAnalyzer
-from src.api.helpers import match_with_prediction, matches_with_predictions, row_to_dict, team_meta
+from src.api.helpers import home_dashboard, match_with_prediction, matches_with_predictions, row_to_dict, team_meta
 from src.db import db_backend
 from src.services.data_sync_service import DataSyncService
 from src.services.model_training_service import ModelTrainingService
@@ -86,6 +86,12 @@ def freshness() -> dict[str, Any]:
 @router.get("/stats")
 def stats() -> dict[str, int]:
     return db.get_platform_stats(tournament_only=True)
+
+
+@router.get("/home")
+def home(limit: int = 48) -> dict[str, Any]:
+    """Matches page: stats + upcoming in one fast read."""
+    return home_dashboard(limit=limit)
 
 
 @router.get("/matches/upcoming")

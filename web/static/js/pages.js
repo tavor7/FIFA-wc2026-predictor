@@ -35,10 +35,9 @@ function regionalVenueCard(form) {
 }
 
 export async function pageMatches() {
-  const [matches, stats] = await Promise.all([
-    request("/matches/upcoming"),
-    request("/stats"),
-  ]);
+  const data = await request("/home");
+  const stats = data.stats || {};
+  const matches = data.matches || [];
   return disclaimerHtml() + statsHtml(stats) +
     (matches.length
       ? matches.map((m) => matchCardHtml(m)).join("")
@@ -351,11 +350,11 @@ export async function pageReports() {
 }
 
 export async function pageMonitor() {
-  const [status, freshness, calibration] = await Promise.all([
+  const [status, freshness] = await Promise.all([
     request("/monitor/status"),
     request("/meta/freshness").catch(() => null),
-    request("/evaluation/calibration").catch(() => null),
   ]);
+  const calibration = await request("/evaluation/calibration?limit=30").catch(() => null);
 
   const jobs = (status.recent_jobs || []).map(
     (j) => `<tr>

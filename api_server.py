@@ -53,6 +53,7 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
     """Short cache for read-only GET JSON endpoints."""
 
     CACHE_PATHS = (
+        "/home",
         "/teams",
         "/tournament/",
         "/players/",
@@ -78,6 +79,7 @@ async def lifespan(app: FastAPI):
         threading.Thread(target=_delayed_scheduler_start, daemon=True).start()
     yield
     stop_scheduler()
+    db.close_postgres_pool()
 
 
 app = FastAPI(
