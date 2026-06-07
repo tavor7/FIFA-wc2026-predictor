@@ -216,4 +216,20 @@ nav?.addEventListener("click", (e) => {
   if (tab) setActiveNav(tab.dataset.route);
 });
 
+async function resumePipelineProgressIfRunning() {
+  try {
+    const { pollPipelineProgress } = await import("./js/api.js");
+    const { updateProgressBar } = await import("./js/components.js");
+    const data = await request("/admin/pipeline/progress", { noCache: true });
+    if (data?.running) {
+      updateProgressBar("pipeline-progress", data);
+      await pollPipelineProgress((p) => updateProgressBar("pipeline-progress", p));
+      if (activeRoute === "monitor") await navigate();
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 navigate();
+resumePipelineProgressIfRunning();

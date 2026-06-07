@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
+from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterator, Optional
 
 from src import db
 from src import db_pipeline as pipe_db
+from src.db_pipeline import STEP_LABELS
 from src.services.data_sync_service import DataSyncService
 from src.services.feature_generation_service import FeatureGenerationService
 from src.services.prediction_generation_service import PredictionGenerationService
@@ -56,32 +59,60 @@ class PipelineOrchestrator:
         status = "success"
 
         def progress(step_idx: int, step_key: str, pct: float, msg: str) -> None:
-            pipe_db.update_pipeline_progress(run_id, step_key, step_idx, pct, msg)
+            pipe_db.update_pipeline_progress(
+                run_id, step_key, step_idx, pct, msg, active_step_indices=step_indices
+            )
+
+        @contextmanager
+        def heartbeat(step_idx: int, step_key: str, label: str) -> Iterator[None]:
+            """Tick progress while a blocking external call runs."""
+            stop = threading.Event()
+            start = time.monotonic()
+
+            def _tick() -> None:
+                tick = 0
+                while not stop.wait(2.5):
+                    tick += 1
+                    elapsed = int(time.monotonic() - start)
+                    fake_pct = min(88, 12 + tick * 8)
+                    progress(
+                        step_idx, step_key, fake_pct,
+                        f"{label}… {elapsed}s",
+                    )
+
+            progress(step_idx, step_key, 8, f"{label}…")
+            t = threading.Thread(target=_tick, daemon=True)
+            t.start()
+            try:
+                yield
+            finally:
+                stop.set()
+                t.join(timeout=1)
 
         try:
             if 0 in step_indices:
-                progress(0, "A", 0, "Syncing fixtures...")
-                r = self.sync.sync_fixtures()
+                with heartbeat(0, "A", STEP_LABELS["A"]):
+                    r = self.sync.sync_fixtures()
                 records_written += r.get("updated", 0) or r.get("total_synced", 0)
                 progress(0, "A", 100, "Fixtures synced")
 
             if 1 in step_indices:
-                progress(1, "B", 0, "Syncing teams and squads...")
-                r = self.sync.sync_team_stats()
+                with heartbeat(1, "B", STEP_LABELS["B"]):
+                    r = self.sync.sync_team_stats()
                 records_written += r.get("updated", 0) or 0
-                progress(1, "B", 100, "Teams/squads synced")
+                progress(1, "B", 100, "Teams synced")
 
             if 2 in step_indices:
-                progress(2, "C", 0, "Syncing injuries...")
-                r = self.sync.sync_injuries()
+                with heartbeat(2, "C", STEP_LABELS["C"]):
+                    r = self.sync.sync_injuries()
                 records_written += r.get("updated", 0) or 0
                 progress(2, "C", 100, "Injuries synced")
 
             if 3 in step_indices:
-                progress(3, "D", 0, "Syncing recent results...")
-                r = self.sync.sync_live()
+                with heartbeat(3, "D", STEP_LABELS["D"]):
+                    r = self.sync.sync_live()
                 records_written += r.get("updated", 0) or 0
-                progress(3, "D", 100, "Recent results synced")
+                progress(3, "D", 100, "Live data synced")
 
             if 4 in step_indices:
                 progress(4, "E", 0, "Generating features...")
@@ -93,9 +124,9 @@ class PipelineOrchestrator:
                     except Exception as exc:
                         records_failed += 1
                         logger.warning("Feature gen failed match %s: %s", m["id"], exc)
-                    if i % 5 == 0:
-                        pct = round(i / max(len(matches), 1) * 100, 1)
-                        progress(4, "E", pct, f"Features {i}/{len(matches)}")
+                    if i % 3 == 0 or i == len(matches) - 1:
+                        pct = round((i + 1) / max(len(matches), 1) * 100, 1)
+                        progress(4, "E", pct, f"Features {i + 1}/{len(matches)}")
                 progress(4, "E", 100, f"Features for {records_written} matches")
 
             if 5 in step_indices:
@@ -109,7 +140,7 @@ class PipelineOrchestrator:
 
                 def pred_progress(i: int, total_n: int) -> None:
                     pct = round(i / max(total_n, 1) * 100, 1)
-                    progress(6, "G", pct, f"Predictions {i}/{total_n}")
+                    progress(6, "G", pct, f"Predictions {i}/{total_n} matches")
 
                 result = self.predictions.generate_all(
                     limit=500, progress_callback=pred_progress
@@ -149,6 +180,12 @@ class PipelineOrchestrator:
             error_message = str(exc)
             logger.exception("Pipeline failed: %s", exc)
         finally:
+            if status == "success" and step_indices:
+                last_key = pipe_db.PIPELINE_STEPS[step_indices[-1]][0]
+                pipe_db.update_pipeline_progress(
+                    run_id, last_key, step_indices[-1],
+                    100, "Pipeline complete", active_step_indices=step_indices,
+                )
             pipe_db.finish_pipeline_run(
                 run_id, status,
                 records_read=records_read,

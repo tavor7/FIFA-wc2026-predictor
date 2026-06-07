@@ -291,12 +291,13 @@ export function adminPanelHtml() {
 }
 
 export function progressBarHtml(id = "pipeline-progress") {
-  return `<div id="${id}" class="progress-panel hidden">
-    <div class="progress-label"><span class="progress-step">Starting…</span><span class="progress-pct">0%</span></div>
+  return `<div id="${id}" class="progress-panel hidden" role="status" aria-live="polite">
+    <div class="progress-header">
+      <span class="progress-phase">Starting pipeline…</span>
+      <span class="progress-pct">0%</span>
+    </div>
     <div class="progress-track"><div class="progress-fill" style="width:0%"></div></div>
-    <div class="progress-steps">${["A","B","C","D","E","F","G","H","I","J"].map((s) =>
-      `<span class="step-dot" data-step="${s}">${s}</span>`
-    ).join("")}</div>
+    <p class="progress-detail">Preparing…</p>
   </div>`;
 }
 
@@ -304,20 +305,30 @@ export function updateProgressBar(panelId, progress) {
   const panel = document.getElementById(panelId);
   if (!panel) return;
   if (!progress?.running) {
+    if (progress?.overall_progress_pct >= 100) {
+      panel.classList.remove("hidden");
+      panel.querySelector(".progress-fill").style.width = "100%";
+      panel.querySelector(".progress-pct").textContent = "100%";
+      panel.querySelector(".progress-phase").textContent = "Complete";
+      panel.querySelector(".progress-detail").textContent = "Refreshing page…";
+      return;
+    }
     panel.classList.add("hidden");
     return;
   }
   panel.classList.remove("hidden");
-  const pct = Math.round(progress.overall_progress_pct || 0);
+  const pct = Math.round(progress.overall_progress_pct || 2);
   panel.querySelector(".progress-fill").style.width = `${pct}%`;
   panel.querySelector(".progress-pct").textContent = `${pct}%`;
-  panel.querySelector(".progress-step").textContent =
-    progress.message || progress.current_step || "Running…";
-  const idx = progress.step_index ?? 0;
-  panel.querySelectorAll(".step-dot").forEach((el, i) => {
-    el.classList.toggle("active", i === idx);
-    el.classList.toggle("done", i < idx);
-  });
+  panel.querySelector(".progress-phase").textContent =
+    progress.phase_label || progress.step_label || "Running pipeline";
+  const detail = progress.message || "";
+  const elapsed = progress.elapsed_seconds
+    ? ` · ${Math.round(progress.elapsed_seconds)}s elapsed`
+    : "";
+  panel.querySelector(".progress-detail").textContent = detail
+    ? `${detail}${elapsed}`
+    : `Working${elapsed}`;
 }
 
 export function freshnessBarHtml(data, pageMeta = {}) {

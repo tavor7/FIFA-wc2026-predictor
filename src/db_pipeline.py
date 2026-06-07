@@ -21,6 +21,65 @@ PIPELINE_STEPS = [
     ("J", "refresh_ui_cache"),
 ]
 
+STEP_LABELS: dict[str, str] = {
+    "A": "Syncing fixtures",
+    "B": "Syncing teams & squads",
+    "C": "Syncing injuries",
+    "D": "Syncing live results",
+    "E": "Generating features",
+    "F": "Validating features",
+    "G": "Generating predictions",
+    "H": "Validating predictions",
+    "I": "Building explanations",
+    "J": "Updating app cache",
+}
+
+# Relative time weights (sum = 100)
+STEP_WEIGHTS = [14, 10, 8, 8, 14, 4, 28, 4, 2, 8]
+
+PHASE_GROUPS: list[tuple[str, list[int]]] = [
+    ("Syncing data", [0, 1, 2, 3]),
+    ("Building features", [4, 5]),
+    ("Generating predictions", [6, 7, 8]),
+    ("Updating cache", [9]),
+]
+
+
+def _phase_label_for_step(step_index: int) -> str:
+    for label, indices in PHASE_GROUPS:
+        if step_index in indices:
+            return label
+    return STEP_LABELS.get(PIPELINE_STEPS[step_index][0], "Running pipeline")
+
+
+def compute_overall_pct(
+    step_index: int,
+    step_progress_pct: float,
+    active_step_indices: list[int],
+) -> float:
+    """Weighted 0–100% based only on steps in the current pipeline mode."""
+    if not active_step_indices:
+        return 0.0
+    if step_index not in active_step_indices:
+        step_index = active_step_indices[0]
+
+    weights = [STEP_WEIGHTS[i] for i in active_step_indices]
+    total_weight = sum(weights) or 1
+    pos = active_step_indices.index(step_index)
+    completed_weight = sum(weights[:pos])
+    current_weight = weights[pos]
+
+    if step_progress_pct >= 100 and step_index == active_step_indices[-1]:
+        return 100.0
+
+    if step_progress_pct >= 100:
+        frac = 1.0
+    else:
+        frac = max(step_progress_pct / 100.0, 0.12)
+
+    overall = (completed_weight + current_weight * frac) / total_weight * 100
+    return round(min(99.0, max(2.0, overall)), 1)
+
 
 def start_pipeline_run(service_name: str, triggered_by: str = "scheduler") -> int:
     now = datetime.utcnow().isoformat()
@@ -71,9 +130,11 @@ def update_pipeline_progress(
     step_index: int,
     step_progress_pct: float,
     message: str,
+    active_step_indices: Optional[list[int]] = None,
 ) -> None:
-    total = len(PIPELINE_STEPS)
-    overall = round((step_index + step_progress_pct / 100.0) / total * 100, 1)
+    active = active_step_indices or list(range(len(PIPELINE_STEPS)))
+    overall = compute_overall_pct(step_index, step_progress_pct, active)
+    total = len(active)
     now = datetime.utcnow().isoformat()
     with get_connection() as conn:
         _execute(
@@ -155,15 +216,22 @@ def get_active_pipeline_progress() -> Optional[dict[str, Any]]:
             )
         except ValueError:
             pass
+    step_idx = int(d["step_index"])
+    phase = _phase_label_for_step(step_idx)
+    step_key = d.get("current_step") or ""
+    step_label = STEP_LABELS.get(step_key, phase)
+
     return {
         "running": True,
         "run_id": d["run_id"],
         "service_name": d.get("service_name"),
-        "current_step": d["current_step"],
-        "step_index": d["step_index"],
+        "current_step": step_key,
+        "step_index": step_idx,
         "total_steps": d["total_steps"],
         "step_progress_pct": d["step_progress_pct"],
         "overall_progress_pct": d["overall_progress_pct"],
+        "phase_label": phase,
+        "step_label": step_label,
         "message": d.get("message"),
         "elapsed_seconds": elapsed,
         "triggered_by": d.get("triggered_by"),

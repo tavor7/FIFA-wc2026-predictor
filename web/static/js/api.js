@@ -125,7 +125,7 @@ export async function loadFreshness() {
   }
 }
 
-export async function pollPipelineProgress(onUpdate, intervalMs = 1500) {
+export async function pollPipelineProgress(onUpdate, intervalMs = 800) {
   return new Promise((resolve) => {
     const poll = async () => {
       try {
