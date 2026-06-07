@@ -147,5 +147,5 @@ def generate_explanation(
         f"Predicted {score_str} because {reason_text}. "
         f"The most likely exact scoreline is {top.get('home', predicted_home)}-"
         f"{top.get('away', predicted_away)} ({prob_pct:.0%} probability). "
-        "Probabilities reflect model estimates for research purposes only."
+        "Research estimate only — not betting advice. Not affiliated with FIFA."
     )

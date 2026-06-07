@@ -1,8 +1,12 @@
 # Football Research Predictor
 
+**Designed by Amit Tavor**
+
 A Python research tool for tracking FIFA World Cup matches, syncing live data from football APIs, and generating **probability-based score predictions with explanations**.
 
-> **Disclaimer:** This project is for **educational and research purposes only**. It does not integrate betting odds, gambling APIs, or wagering recommendations. All outputs are probabilistic estimates, not guaranteed predictions.
+> **Disclaimer — read before use**
+>
+> This project is for **educational and research purposes only**. It is **not** betting advice, gambling advice, or financial advice. All outputs are probabilistic estimates — not guaranteed predictions. This tool is **not affiliated with FIFA** or any official football organization. No betting odds, gambling APIs, or wagering recommendations are integrated. **Use at your own discretion.**
 
 ## Features
 

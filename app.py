@@ -20,13 +20,22 @@ from src.sync_live_data import sync_live_data  # noqa: E402
 from src.sync_matches import sync_all_matches  # noqa: E402
 
 st.set_page_config(
-    page_title="WC 2026",
+    page_title="WC 2026 · Research Tool",
     page_icon="⚽",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
 
 db.init_db()
+
+AUTHOR = "Amit Tavor"
+DISCLAIMER_SHORT = "For educational & research purposes only. Not betting or financial advice."
+DISCLAIMER_FULL = (
+    "This tool is for educational and research purposes only. "
+    "All outputs are probabilistic estimates, not guaranteed predictions. "
+    "Not affiliated with FIFA. No betting, gambling, or wagering advice. "
+    "Use at your own discretion."
+)
 
 CSS = """
 <style>
@@ -65,6 +74,50 @@ CSS = """
     color: #71717a;
     margin: 0.15rem 0 0;
     font-weight: 400;
+  }
+  .app-credit {
+    font-size: 0.6875rem;
+    color: #52525b;
+    margin-top: 0.2rem;
+  }
+
+  .disclaimer-banner {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 10px;
+    padding: 0.625rem 0.875rem;
+    margin-bottom: 1rem;
+    font-size: 0.6875rem;
+    color: #71717a;
+    line-height: 1.45;
+  }
+  .disclaimer-banner strong { color: #a1a1aa; font-weight: 600; }
+
+  .site-footer {
+    margin-top: 2rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    text-align: center;
+  }
+  .footer-credit {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: #a1a1aa;
+    margin: 0 0 0.35rem;
+  }
+  .footer-disclaimer {
+    font-size: 0.6875rem;
+    color: #52525b;
+    line-height: 1.5;
+    max-width: 360px;
+    margin: 0 auto;
+  }
+
+  .pick-disclaimer {
+    font-size: 0.625rem;
+    color: #52525b;
+    margin-top: 0.625rem;
+    line-height: 1.4;
   }
 
   /* ── Match card ── */
@@ -352,8 +405,33 @@ def render_header() -> None:
         <div class="app-header">
           <div>
             <p class="app-title">World Cup 2026</p>
-            <p class="app-sub">{n} upcoming matches · research only</p>
+            <p class="app-sub">{n} upcoming matches</p>
+            <p class="app-credit">Designed by {_esc(AUTHOR)}</p>
           </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_disclaimer_banner() -> None:
+    st.markdown(
+        f"""
+        <div class="disclaimer-banner">
+          <strong>Research only.</strong> {_esc(DISCLAIMER_SHORT)}
+          Predictions are estimates, not guarantees. Not affiliated with FIFA.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_footer() -> None:
+    st.markdown(
+        f"""
+        <div class="site-footer">
+          <p class="footer-credit">Designed by {_esc(AUTHOR)}</p>
+          <p class="footer-disclaimer">{_esc(DISCLAIMER_FULL)}</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -430,6 +508,10 @@ def render_match_card(match: dict, compact: bool = False) -> None:
                     f'<p class="explain">{_esc(pred["explanation"])}</p>',
                     unsafe_allow_html=True,
                 )
+            st.markdown(
+                f'<p class="pick-disclaimer">{_esc(DISCLAIMER_SHORT)}</p>',
+                unsafe_allow_html=True,
+            )
 
 
 def render_toolbar() -> None:
@@ -540,6 +622,7 @@ def main() -> None:
     inject_styles()
     _auto_bootstrap()
     render_header()
+    render_disclaimer_banner()
     render_toolbar()
 
     tab1, tab2, tab3, tab4 = st.tabs(["Matches", "Live", "Results", "Detail"])
@@ -552,6 +635,8 @@ def main() -> None:
         page_results()
     with tab4:
         page_detail()
+
+    render_footer()
 
 
 if __name__ == "__main__":
