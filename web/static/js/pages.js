@@ -104,10 +104,12 @@ export async function pageTeam(slug) {
     .map(
       (p) => `<tr>
         <td>${escapeHtml(p.name || "?")}</td>
-        <td>${escapeHtml(p.position || "—")}</td>
-        <td>${p.rating != null ? p.rating.toFixed(1) : "—"}</td>
-        <td>${p.form ?? "—"}</td>
-        <td>${p.appearances ?? p.caps ?? "—"}</td>
+        <td>${escapeHtml(p.positions_detail || p.position || "—")}</td>
+        <td>${p.age ?? "—"}</td>
+        <td>${p.rating != null ? Math.round(p.rating) : "—"}</td>
+        <td>${p.potential != null ? Math.round(p.potential) : "—"}</td>
+        <td>${escapeHtml(p.preferred_foot || "—")}</td>
+        <td title="PAC ${p.stat_pace ?? "—"} · SHO ${p.stat_shooting ?? "—"} · PAS ${p.stat_passing ?? "—"} · DRI ${p.stat_dribbling ?? "—"} · DEF ${p.stat_defending ?? "—"} · PHY ${p.stat_physical ?? "—"}">${escapeHtml(p.club || "—")}</td>
         <td>${p.injured ? '<span class="badge badge-injury">Injured</span>' : ""}</td>
       </tr>`
     );
@@ -115,7 +117,7 @@ export async function pageTeam(slug) {
   const squadSection = section(
     "Squad",
     players.length
-      ? tableHtml(["Player", "Pos", "Rating", "Form", "Apps", "Status"], squadRows)
+      ? tableHtml(["Player", "Pos", "Age", "OVR", "POT", "Foot", "Club", "Status"], squadRows)
       : `<p class="empty">Squad data not synced yet.</p>`
   );
 

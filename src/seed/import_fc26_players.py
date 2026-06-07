@@ -11,6 +11,7 @@ import requests
 
 from src import config, db
 from src import db_extended as dbx
+from src.seed.fc26_columns import FC26_CSV_USECOLS
 from src.seed.load_seeds import SEED_DIR, _load_json
 from src.seed.nationality_map import nationality_to_team
 from src.team_flags import get_country_code, slugify
@@ -18,7 +19,6 @@ from src.team_names import normalize_team_name
 
 logger = logging.getLogger(__name__)
 
-# Same file as https://www.kaggle.com/datasets/rovnez/fc-26-fifa-26-player-data
 FC26_CSV_PATH = SEED_DIR / "fc26_players.csv"
 FC26_CSV_URL = (
     "https://raw.githubusercontent.com/ismailoksuz/EAFC26-DataHub/main/data/players.csv"
@@ -38,6 +38,30 @@ def _primary_position(raw: str) -> Optional[str]:
     if pos in {"CM", "CDM", "CAM", "LM", "RM", "LCM", "RCM", "LDM", "RDM", "LAM", "RAM"}:
         return "M"
     return "F"
+
+
+def _positions_detail(raw: str) -> Optional[str]:
+    if not raw or not isinstance(raw, str):
+        return None
+    return raw.strip().upper() or None
+
+
+def _optional_int(val: Any) -> Optional[int]:
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(val: Any) -> Optional[float]:
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
 
 
 def _wc_team_names() -> set[str]:
@@ -89,6 +113,32 @@ def _clear_fc26_players() -> int:
     return before
 
 
+def _row_to_player_kwargs(row: Any) -> dict[str, Any]:
+    pos_raw = str(row.get("player_positions") or "")
+    name = str(row.get("short_name") or row.get("long_name") or "Unknown").strip()
+    foot = str(row.get("preferred_foot") or "").strip()
+    photo = str(row.get("player_face_url") or "").strip()
+    return {
+        "name": name,
+        "position": _primary_position(pos_raw),
+        "positions_detail": _positions_detail(pos_raw),
+        "rating": _optional_float(row.get("overall")),
+        "potential": _optional_float(row.get("potential")),
+        "age": _optional_int(row.get("age")),
+        "club": str(row.get("club_name") or "").strip() or None,
+        "preferred_foot": foot[:1].upper() if foot else None,
+        "jersey_number": _optional_int(row.get("nation_jersey_number")),
+        "stat_pace": _optional_float(row.get("pace")),
+        "stat_shooting": _optional_float(row.get("shooting")),
+        "stat_passing": _optional_float(row.get("passing")),
+        "stat_dribbling": _optional_float(row.get("dribbling")),
+        "stat_defending": _optional_float(row.get("defending")),
+        "stat_physical": _optional_float(row.get("physic")),
+        "int_reputation": _optional_int(row.get("international_reputation")),
+        "photo_url": photo or None,
+    }
+
+
 def import_fc26_players(
     csv_path: Optional[Path] = None,
     squad_size: int = SQUAD_SIZE,
@@ -96,7 +146,7 @@ def import_fc26_players(
 ) -> dict[str, Any]:
     """
     Load Kaggle / SoFIFA FC26 ratings for WC 2026 national teams.
-    Uses game overall rating — not real-world match stats.
+    Uses short_name for display and six face stats for squad detail.
     """
     db.init_db()
     path = csv_path or FC26_CSV_PATH
@@ -110,10 +160,7 @@ def import_fc26_players(
         )
 
     wc_teams = _wc_team_names()
-    df = pd.read_csv(path, usecols=[
-        "player_id", "short_name", "long_name", "player_positions",
-        "overall", "club_name", "nationality_name", "age",
-    ])
+    df = pd.read_csv(path, usecols=FC26_CSV_USECOLS)
     df["team"] = df["nationality_name"].map(nationality_to_team)
     df = df[df["team"].isin(wc_teams)].copy()
     df["overall"] = pd.to_numeric(df["overall"], errors="coerce")
@@ -129,14 +176,11 @@ def import_fc26_players(
         teams_touched.add(team_name)
         for _, row in group.head(squad_size).iterrows():
             pid = int(row["player_id"])
-            name = str(row.get("long_name") or row.get("short_name") or "Unknown")
+            kwargs = _row_to_player_kwargs(row)
             dbx.upsert_player(
-                name=name,
                 team_id=team_id,
                 api_player_id=FC26_ID_OFFSET + pid,
-                position=_primary_position(str(row.get("player_positions") or "")),
-                rating=float(row["overall"]),
-                club=str(row.get("club_name") or "") or None,
+                **kwargs,
             )
             written += 1
 
@@ -153,6 +197,7 @@ def import_fc26_players(
         "players_written": written,
         "players_removed": removed,
         "squad_size": squad_size,
+        "fields_imported": list(FC26_CSV_USECOLS),
         "note": "Game ratings for squads only; match goals/assists come from live sync during the tournament.",
     }
 

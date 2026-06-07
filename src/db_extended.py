@@ -136,27 +136,60 @@ def upsert_player(
     form: Optional[float] = None,
     caps: Optional[int] = None,
     club: Optional[str] = None,
+    positions_detail: Optional[str] = None,
+    potential: Optional[float] = None,
+    age: Optional[int] = None,
+    preferred_foot: Optional[str] = None,
+    jersey_number: Optional[int] = None,
+    stat_pace: Optional[float] = None,
+    stat_shooting: Optional[float] = None,
+    stat_passing: Optional[float] = None,
+    stat_dribbling: Optional[float] = None,
+    stat_defending: Optional[float] = None,
+    stat_physical: Optional[float] = None,
+    int_reputation: Optional[int] = None,
+    photo_url: Optional[str] = None,
 ) -> int:
     now = _now()
+    fields = {
+        "name": name,
+        "team_id": team_id,
+        "position": position,
+        "positions_detail": positions_detail,
+        "rating": rating,
+        "potential": potential,
+        "age": age,
+        "form": form,
+        "caps": caps,
+        "club": club,
+        "preferred_foot": preferred_foot,
+        "jersey_number": jersey_number,
+        "stat_pace": stat_pace,
+        "stat_shooting": stat_shooting,
+        "stat_passing": stat_passing,
+        "stat_dribbling": stat_dribbling,
+        "stat_defending": stat_defending,
+        "stat_physical": stat_physical,
+        "int_reputation": int_reputation,
+        "photo_url": photo_url,
+        "last_updated": now,
+    }
     with get_connection() as conn:
         if api_player_id is not None:
+            cols = ["api_player_id"] + list(fields.keys())
+            placeholders = ", ".join(["?"] * len(cols))
+            updates = ", ".join(
+                f"{c}=COALESCE(excluded.{c}, players.{c})" if c != "name" else f"{c}=excluded.{c}"
+                for c in fields
+            )
             _execute(
                 conn,
-                """
-                INSERT INTO players (
-                    api_player_id, team_id, name, position, rating, form, caps, club, last_updated
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(api_player_id) DO UPDATE SET
-                    team_id=COALESCE(excluded.team_id, players.team_id),
-                    name=excluded.name,
-                    position=COALESCE(excluded.position, players.position),
-                    rating=COALESCE(excluded.rating, players.rating),
-                    form=COALESCE(excluded.form, players.form),
-                    caps=COALESCE(excluded.caps, players.caps),
-                    club=COALESCE(excluded.club, players.club),
-                    last_updated=excluded.last_updated
+                f"""
+                INSERT INTO players ({", ".join(cols)})
+                VALUES ({placeholders})
+                ON CONFLICT(api_player_id) DO UPDATE SET {updates}
                 """,
-                (api_player_id, team_id, name, position, rating, form, caps, club, now),
+                (api_player_id, *fields.values()),
             )
             row = _execute(
                 conn, "SELECT id FROM players WHERE api_player_id = ?", (api_player_id,)
@@ -168,30 +201,23 @@ def upsert_player(
                 (name, team_id),
             ).fetchone()
             if existing:
+                set_clause = ", ".join(f"{c}=COALESCE(?, {c})" for c in fields if c != "last_updated")
+                set_clause += ", last_updated=?"
                 _execute(
                     conn,
-                    """
-                    UPDATE players SET
-                        position=COALESCE(?, position),
-                        rating=COALESCE(?, rating),
-                        form=COALESCE(?, form),
-                        caps=COALESCE(?, caps),
-                        club=COALESCE(?, club),
-                        last_updated=?
-                    WHERE id=?
-                    """,
-                    (position, rating, form, caps, club, now, existing["id"]),
+                    f"UPDATE players SET {set_clause} WHERE id=?",
+                    (*[fields[c] for c in fields if c != "last_updated"], now, existing["id"]),
                 )
                 row = existing
             else:
+                cols = list(fields.keys())
                 _execute(
                     conn,
-                    """
-                    INSERT INTO players (
-                        api_player_id, team_id, name, position, rating, form, caps, club, last_updated
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    f"""
+                    INSERT INTO players (api_player_id, {", ".join(cols)})
+                    VALUES (?, {", ".join(["?"] * len(cols))})
                     """,
-                    (None, team_id, name, position, rating, form, caps, club, now),
+                    (None, *fields.values()),
                 )
                 row = _execute(conn, "SELECT last_insert_rowid() AS id").fetchone()
         return int(row["id"])

@@ -186,10 +186,23 @@ CREATE TABLE IF NOT EXISTS players (
     team_id INTEGER,
     name TEXT NOT NULL,
     position TEXT,
+    positions_detail TEXT,
     rating REAL,
+    potential REAL,
+    age INTEGER,
     form REAL,
     caps INTEGER,
     club TEXT,
+    preferred_foot TEXT,
+    jersey_number INTEGER,
+    stat_pace REAL,
+    stat_shooting REAL,
+    stat_passing REAL,
+    stat_dribbling REAL,
+    stat_defending REAL,
+    stat_physical REAL,
+    int_reputation INTEGER,
+    photo_url TEXT,
     last_updated TEXT,
     FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE SET NULL
 );
@@ -473,6 +486,27 @@ def _migrate_extended_schema(conn: Any) -> None:
         fs_cols = _table_columns(conn, "feature_store")
         if "metadata_json" not in fs_cols:
             conn.execute("ALTER TABLE feature_store ADD COLUMN metadata_json TEXT")
+
+    if _table_exists(conn, "players"):
+        player_cols = {
+            "positions_detail": "TEXT",
+            "potential": "REAL",
+            "age": "INTEGER",
+            "preferred_foot": "TEXT",
+            "jersey_number": "INTEGER",
+            "stat_pace": "REAL",
+            "stat_shooting": "REAL",
+            "stat_passing": "REAL",
+            "stat_dribbling": "REAL",
+            "stat_defending": "REAL",
+            "stat_physical": "REAL",
+            "int_reputation": "INTEGER",
+            "photo_url": "TEXT",
+        }
+        existing_players = _table_columns(conn, "players")
+        for col, col_type in player_cols.items():
+            if col not in existing_players:
+                conn.execute(f"ALTER TABLE players ADD COLUMN {col} {col_type}")
 
     if config.USE_POSTGRES:
         conn.execute(

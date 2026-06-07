@@ -115,10 +115,23 @@ CREATE TABLE IF NOT EXISTS players (
     team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
     position TEXT,
+    positions_detail TEXT,
     rating REAL,
+    potential REAL,
+    age INTEGER,
     form REAL,
     caps INTEGER,
     club TEXT,
+    preferred_foot TEXT,
+    jersey_number INTEGER,
+    stat_pace REAL,
+    stat_shooting REAL,
+    stat_passing REAL,
+    stat_dribbling REAL,
+    stat_defending REAL,
+    stat_physical REAL,
+    int_reputation INTEGER,
+    photo_url TEXT,
     last_updated TEXT
 );
 
