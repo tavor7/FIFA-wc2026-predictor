@@ -12,6 +12,13 @@ from src import config
 
 Row = Union[dict[str, Any], sqlite3.Row]
 
+WC_LEAGUE_LIKE = "%world cup%"
+WC_FILTER_SQL = " AND LOWER(league) LIKE ? AND season = ?"
+
+
+def _wc_filter_params() -> list[Any]:
+    return [WC_LEAGUE_LIKE, config.SEASON]
+
 
 def _adapt_sql(sql: str) -> str:
     """Convert SQLite-style ? placeholders to PostgreSQL %s when needed."""
@@ -915,10 +922,10 @@ def get_match_by_external_id(external_id: str) -> Optional[Row]:
 
 def get_matches_by_status(statuses: list[str], tournament_only: bool = False) -> list[Row]:
     placeholders = ",".join("?" * len(statuses))
-    wc_clause = " AND LOWER(league) LIKE '%world cup%' AND season = ?" if tournament_only else ""
+    wc_clause = WC_FILTER_SQL if tournament_only else ""
     params: list[Any] = list(statuses)
     if tournament_only:
-        params.append(config.SEASON)
+        params.extend(_wc_filter_params())
     with get_connection() as conn:
         return _execute(
             conn,
@@ -928,8 +935,8 @@ def get_matches_by_status(statuses: list[str], tournament_only: bool = False) ->
 
 
 def get_upcoming_matches(limit: int = 50, tournament_only: bool = True) -> list[Row]:
-    wc_clause = " AND LOWER(league) LIKE '%world cup%' AND season = ?" if tournament_only else ""
-    params: list[Any] = [config.SEASON, limit] if tournament_only else [limit]
+    wc_clause = WC_FILTER_SQL if tournament_only else ""
+    params: list[Any] = (*_wc_filter_params(), limit) if tournament_only else [limit]
     with get_connection() as conn:
         return _execute(
             conn,
@@ -955,8 +962,8 @@ def get_live_matches(tournament_only: bool = True) -> list[Row]:
 
 
 def get_recent_matches(limit: int = 50, tournament_only: bool = True) -> list[Row]:
-    wc_clause = " AND LOWER(league) LIKE '%world cup%' AND season = ?" if tournament_only else ""
-    params: list[Any] = [config.SEASON, limit] if tournament_only else [limit]
+    wc_clause = WC_FILTER_SQL if tournament_only else ""
+    params: list[Any] = (*_wc_filter_params(), limit) if tournament_only else [limit]
     with get_connection() as conn:
         return _execute(
             conn,
@@ -1004,8 +1011,8 @@ def get_predictions_for_match_ids(match_ids: list[int]) -> dict[int, Row]:
 
 def get_platform_stats(tournament_only: bool = True) -> dict[str, int]:
     """Fast counts for dashboard — read-only, no computation."""
-    wc = " AND LOWER(league) LIKE '%world cup%' AND season = ?" if tournament_only else ""
-    season = [config.SEASON] if tournament_only else []
+    wc = WC_FILTER_SQL if tournament_only else ""
+    wc_params = _wc_filter_params() if tournament_only else []
     live_statuses = ("1H", "2H", "HT", "ET", "BT", "P", "LIVE", "IN_PLAY", "PAUSED")
     live_ph = ",".join("?" * len(live_statuses))
     with get_connection() as conn:
@@ -1019,12 +1026,12 @@ def get_platform_stats(tournament_only: bool = True) -> dict[str, int]:
                     AND home_goals IS NULL)
             ){wc}
             """,
-            season,
+            wc_params,
         ).fetchone()
         live = _execute(
             conn,
             f"SELECT COUNT(*) AS n FROM matches WHERE status IN ({live_ph}){wc}",
-            list(live_statuses) + season,
+            list(live_statuses) + wc_params,
         ).fetchone()
         preds = _execute(conn, "SELECT COUNT(*) AS n FROM predictions", ()).fetchone()
         teams = _execute(conn, "SELECT COUNT(*) AS n FROM teams", ()).fetchone()
