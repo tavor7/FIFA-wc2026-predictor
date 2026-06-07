@@ -22,7 +22,7 @@ from src.sync_injuries import sync_injuries
 from src.sync_live_data import sync_live_data
 from src.sync_matches import sync_all_matches
 from src.bracket.knockout_view import build_knockout_view
-from src.seed.load_seeds import api_keys_status, ensure_baseline_data, load_all_seeds, table_counts
+from src.seed.load_seeds import api_keys_status, ensure_baseline_data, table_counts
 from src.sync.sync_bracket import sync_bracket
 from src.config import SEASON
 from src.sync.sync_events import sync_events
@@ -393,11 +393,23 @@ def retrain() -> dict[str, Any]:
 
 
 @router.post("/seed")
-def seed_database(force: bool = False) -> dict[str, Any]:
-    """Load bundled WC 2026 fixtures, groups, 2022 history, strength, and predictions."""
-    if force:
-        return load_all_seeds(run_predictions=True)
-    return ensure_baseline_data(min_matches=10, run_predictions=True)
+def seed_database(
+    bg: BackgroundTasks,
+    force: bool = False,
+    quick: bool = False,
+) -> dict[str, Any]:
+    """Load bundled WC 2026 data. Full seed runs in background (avoids Render timeout)."""
+    from src.seed.load_seeds import _run_seed_job, load_standings_only
+
+    if quick:
+        return load_standings_only()
+
+    bg.add_task(_run_seed_job, force)
+    return {
+        "status": "started",
+        "message": "Seed running in background (fixtures, standings, predictions). Refresh Monitor in 1–2 min.",
+        "force": force,
+    }
 
 
 @router.get("/meta/data-status")

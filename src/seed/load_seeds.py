@@ -41,23 +41,23 @@ def _load_json(name: str) -> Any:
 
 
 def _safe_upsert_team(name: str, api_id: Optional[int] = None) -> None:
-    slug = slugify(name)
-    with db.get_connection() as conn:
-        if _execute(conn, "SELECT 1 FROM teams WHERE name = ?", (name,)).fetchone():
-            return
-        if _execute(conn, "SELECT 1 FROM teams WHERE slug = ?", (slug,)).fetchone():
-            return
-        if api_id and _execute(conn, "SELECT 1 FROM teams WHERE api_team_id = ?", (api_id,)).fetchone():
-            api_id = None
     try:
         dbx.upsert_team(
             name,
-            slug=slug,
+            slug=slugify(name),
             country_code=get_country_code(name),
             api_team_id=api_id,
         )
     except Exception as exc:
         logger.debug("Team upsert failed for %s: %s", name, exc)
+        try:
+            dbx.upsert_team(
+                name,
+                slug=slugify(name),
+                country_code=get_country_code(name),
+            )
+        except Exception:
+            pass
 
 
 def _team_group_map(groups: dict[str, list[str]]) -> dict[str, str]:
@@ -185,6 +185,31 @@ def table_counts() -> dict[str, int]:
             except Exception:
                 counts[table] = -1
     return counts
+
+
+def _run_seed_job(force: bool = False) -> None:
+    """Background-safe seed runner with logging."""
+    try:
+        if force:
+            load_all_seeds(run_predictions=True)
+        else:
+            ensure_baseline_data(min_matches=10, run_predictions=True)
+    except Exception as exc:
+        logger.exception("Seed job failed: %s", exc)
+        try:
+            dbx.insert_sync_log("load_seeds", "error", source="bundled", error_message=str(exc)[:500])
+        except Exception:
+            pass
+
+
+def load_standings_only() -> dict[str, Any]:
+    """Fast path: group tables + teams only (for quick HTTP response)."""
+    db.init_db()
+    standings = load_group_standings()
+    strength = recompute_and_persist()
+    counts = table_counts()
+    dbx.insert_sync_log("load_seeds_standings", "ok", source="bundled", records_affected=counts.get("standings", 0))
+    return {"standings": standings, "strength": strength, "counts": counts}
 
 
 def ensure_baseline_data(min_matches: int = 10, run_predictions: bool = False) -> dict[str, Any]:
