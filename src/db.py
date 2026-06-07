@@ -15,9 +15,28 @@ Row = Union[dict[str, Any], sqlite3.Row]
 WC_LEAGUE_LIKE = "%world cup%"
 WC_FILTER_SQL = " AND LOWER(league) LIKE ? AND season = ?"
 
+_pg_pool: Any = None
+
 
 def _wc_filter_params() -> list[Any]:
     return [WC_LEAGUE_LIKE, config.SEASON]
+
+
+def _postgres_pool() -> Any:
+    global _pg_pool
+    if _pg_pool is None:
+        import psycopg
+        from psycopg.rows import dict_row
+        from psycopg_pool import ConnectionPool
+
+        _pg_pool = ConnectionPool(
+            conninfo=_normalize_db_url(config.DATABASE_URL),
+            min_size=1,
+            max_size=6,
+            kwargs={"row_factory": dict_row},
+            open=True,
+        )
+    return _pg_pool
 
 
 def _adapt_sql(sql: str) -> str:
@@ -43,21 +62,13 @@ def get_connection() -> Generator[Any, None, None]:
     """Yield a database connection (SQLite or Supabase Postgres)."""
     _ensure_db_dir()
     if config.USE_POSTGRES:
-        import psycopg
-        from psycopg.rows import dict_row
-
-        conn = psycopg.connect(
-            _normalize_db_url(config.DATABASE_URL),
-            row_factory=dict_row,
-        )
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        with _postgres_pool().connection() as conn:
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
     else:
         conn = sqlite3.connect(config.DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -1010,36 +1021,41 @@ def get_predictions_for_match_ids(match_ids: list[int]) -> dict[int, Row]:
 
 
 def get_platform_stats(tournament_only: bool = True) -> dict[str, int]:
-    """Fast counts for dashboard — read-only, no computation."""
-    wc = WC_FILTER_SQL if tournament_only else ""
+    """Fast counts for dashboard — single round-trip to the database."""
     wc_params = _wc_filter_params() if tournament_only else []
+    wc_match = WC_FILTER_SQL if tournament_only else ""
     live_statuses = ("1H", "2H", "HT", "ET", "BT", "P", "LIVE", "IN_PLAY", "PAUSED")
     live_ph = ",".join("?" * len(live_statuses))
+
+    upcoming_where = f"""
+        (
+            status IN ('NS', 'TBD', 'SCHEDULED', 'TIMED', 'Not Started')
+            OR (status NOT IN ('FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO')
+                AND home_goals IS NULL)
+        ){wc_match}
+    """
+    live_where = f"status IN ({live_ph}){wc_match}"
+
+    # One query — avoids 4× latency to remote Supabase
+    params = wc_params + list(live_statuses) + wc_params
     with get_connection() as conn:
-        upcoming = _execute(
+        row = _execute(
             conn,
             f"""
-            SELECT COUNT(*) AS n FROM matches
-            WHERE (
-                status IN ('NS', 'TBD', 'SCHEDULED', 'TIMED', 'Not Started')
-                OR (status NOT IN ('FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO')
-                    AND home_goals IS NULL)
-            ){wc}
+            SELECT
+                (SELECT COUNT(*) FROM matches WHERE {upcoming_where}) AS upcoming,
+                (SELECT COUNT(*) FROM matches WHERE {live_where}) AS live,
+                (SELECT COUNT(*) FROM predictions) AS predictions,
+                (SELECT COUNT(*) FROM teams) AS teams
             """,
-            wc_params,
+            params,
         ).fetchone()
-        live = _execute(
-            conn,
-            f"SELECT COUNT(*) AS n FROM matches WHERE status IN ({live_ph}){wc}",
-            list(live_statuses) + wc_params,
-        ).fetchone()
-        preds = _execute(conn, "SELECT COUNT(*) AS n FROM predictions", ()).fetchone()
-        teams = _execute(conn, "SELECT COUNT(*) AS n FROM teams", ()).fetchone()
+    d = dict(row)
     return {
-        "upcoming": int(dict(upcoming)["n"]),
-        "live": int(dict(live)["n"]),
-        "predictions": int(dict(preds)["n"]),
-        "teams": int(dict(teams)["n"]),
+        "upcoming": int(d["upcoming"]),
+        "live": int(d["live"]),
+        "predictions": int(d["predictions"]),
+        "teams": int(d["teams"]),
     }
 
 

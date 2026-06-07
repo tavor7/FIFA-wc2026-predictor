@@ -57,7 +57,7 @@ def _list_prediction_dict(p: dict[str, Any]) -> dict[str, Any]:
         "draw_prob": p["draw_prob"],
         "away_win_prob": p["away_win_prob"],
         "exact_score_prob": p.get("exact_score_prob"),
-        "top_scorelines": top_scorelines,
+        "top_scorelines": top_scorelines[:1],
         "explanation": p.get("explanation"),
         "generated_at": p.get("generated_at"),
         "confidence_pct": p.get("confidence_pct"),
