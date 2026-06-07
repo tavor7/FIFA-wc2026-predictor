@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   RefreshControl,
   StyleSheet,
@@ -8,6 +7,7 @@ import {
   View,
 } from "react-native";
 import { MatchCard } from "@/components/MatchCard";
+import { SkeletonCard } from "@/components/SkeletonCard";
 import { DisclaimerBanner } from "@/components/DisclaimerBanner";
 import { Footer } from "@/components/Footer";
 import { api } from "@/services/api";
@@ -21,7 +21,6 @@ export default function LiveScreen() {
 
   const load = useCallback(async () => {
     try {
-      await api.syncLive().catch(() => null);
       setMatches(await api.live());
     } finally {
       setLoading(false);
@@ -35,8 +34,9 @@ export default function LiveScreen() {
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator color={colors.text} />
+      <View style={styles.content}>
+        <DisclaimerBanner />
+        <SkeletonCard />
       </View>
     );
   }
@@ -70,6 +70,5 @@ export default function LiveScreen() {
 const styles = StyleSheet.create({
   list: { flex: 1, backgroundColor: colors.bg },
   content: { padding: spacing.md },
-  center: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: colors.bg },
   empty: { color: colors.textMuted, textAlign: "center", padding: spacing.xl },
 });

@@ -33,6 +33,33 @@ class ConfidenceReport:
         return asdict(self)
 
 
+def feature_contributions(features: MatchFeatures, ensemble: EnsembleResult) -> dict[str, float]:
+    """Signed feature contributions for explanation (req 17)."""
+    f = features.features
+    elo = float(f.get("elo_diff", 0)) / 400.0
+    squad = (
+        float(f.get("starting_xi_strength_home", 0.55))
+        - float(f.get("starting_xi_strength_away", 0.55))
+    )
+    form = float(f.get("recent_form_home", 0.5)) - float(f.get("recent_form_away", 0.5))
+    injury = (
+        float(f.get("injured_key_players_away_score", 0))
+        - float(f.get("injured_key_players_home_score", 0))
+    )
+    rest = float(f.get("rest_days_diff", 0)) / 7.0
+    regional = float(f.get("home_advantage", 0))
+    stage_baseline = 0.05
+    return {
+        "elo_diff": round(elo * 100, 2),
+        "squad_strength": round(squad * 100, 2),
+        "recent_form": round(form * 100, 2),
+        "injury": round(injury * 100, 2),
+        "stage_goal_baseline": stage_baseline,
+        "rest_days": round(rest * 100, 2),
+        "regional_boost": round(regional * 100, 2),
+    }
+
+
 def _factor_breakdown(features: MatchFeatures, ensemble: EnsembleResult) -> dict[str, float]:
     f = features.features
     raw = {

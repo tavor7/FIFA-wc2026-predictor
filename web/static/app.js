@@ -1,5 +1,5 @@
-import { request, loadFreshness } from "./js/api.js";
-import { freshnessBarHtml } from "./js/components.js";
+import { request, loadFreshness, lastResponseMeta, adminLogin, getAdminToken, pollPipelineProgress } from "./js/api.js";
+import { freshnessBarHtml, skeletonCardsHtml } from "./js/components.js";
 import {
   pageMatches, pageLive, pageResults, pageTeam, pageMatch,
   pageTournament, pageBracket, pagePlayers, pageReports, pageMonitor,
@@ -59,10 +59,16 @@ function showError(msg) {
   }
 }
 
+let pageMeta = {};
+
 async function updateFreshnessBar() {
   const data = await loadFreshness();
   if (!freshnessBar) return;
-  const html = freshnessBarHtml(data);
+  const html = freshnessBarHtml(data, {
+    ...pageMeta,
+    responseTimeMs: lastResponseMeta.responseTimeMs,
+    cache: lastResponseMeta.cache,
+  });
   if (html) {
     freshnessBar.innerHTML = html;
     freshnessBar.classList.remove("hidden");
@@ -77,12 +83,11 @@ async function navigate() {
   activeRoute = name;
   setActiveNav(name === "team" || name === "match" ? "matches" : name);
   showError(null);
-  showLoading(true);
-  content.innerHTML = "";
+  showLoading(false);
+  content.innerHTML = skeletonCardsHtml(name === "monitor" ? 2 : 4);
   try {
     const html = await handler(match);
     content.innerHTML = html;
-    showLoading(false);
     void updateFreshnessBar();
   } catch (e) {
     showError(e.message || "Failed to load page");
@@ -91,34 +96,21 @@ async function navigate() {
   }
 }
 
-async function refreshData() {
-  const btn = document.querySelector("#btn-refresh");
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = `<span class="btn-icon">↻</span> Syncing…`;
-  }
-  showError(null);
+async function ensureAdminAuth() {
+  if (getAdminToken()) return true;
+  const password = window.prompt("Admin password required:");
+  if (!password) return false;
   try {
-    await request("/seed", { method: "POST" }).catch(() => null);
-    await request("/sync/full", { method: "POST" });
-    await new Promise((r) => setTimeout(r, 2000));
-    await navigate();
+    await adminLogin(password);
+    return true;
   } catch {
-    try {
-      await request("/sync/matches", { method: "POST" });
-      await navigate();
-    } catch {
-      showError("Sync failed — Render free tier may be cold-starting. Try again in a minute.");
-    }
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = `<span class="btn-icon">↻</span> Sync data`;
-    }
+    showError("Invalid admin password");
+    return false;
   }
 }
 
 async function adminRefreshPredictions() {
+  if (!(await ensureAdminAuth())) return;
   const btn = document.querySelector("#btn-admin-predict");
   if (btn) {
     btn.disabled = true;
@@ -137,15 +129,35 @@ async function adminRefreshPredictions() {
   }
 }
 
+async function adminRunPipeline(mode) {
+  if (!(await ensureAdminAuth())) return;
+  const { updateProgressBar } = await import("./js/components.js");
+  try {
+    await request(`/admin/pipeline/run?mode=${encodeURIComponent(mode)}`, { method: "POST" });
+    await pollPipelineProgress((p) => updateProgressBar("pipeline-progress", p));
+    await navigate();
+  } catch (e) {
+    showError(e.message || "Pipeline run failed");
+  }
+}
+
 window.addEventListener("hashchange", navigate);
 
-document.querySelector("#btn-refresh")?.addEventListener("click", refreshData);
 document.addEventListener("click", (e) => {
   if (e.target.closest("#btn-admin-predict")) {
     e.preventDefault();
     adminRefreshPredictions();
   }
+  const pipeBtn = e.target.closest("[data-pipeline-mode]");
+  if (pipeBtn) {
+    e.preventDefault();
+    adminRunPipeline(pipeBtn.dataset.pipelineMode);
+  }
 });
+
+window.setPageMeta = (meta) => {
+  pageMeta = meta || {};
+};
 
 document.querySelector("#disclaimer-toggle")?.addEventListener("click", () => {
   document.querySelector("#disclaimer-panel")?.classList.toggle("hidden");

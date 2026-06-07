@@ -90,7 +90,9 @@ def get_connection() -> Generator[Any, None, None]:
 
 
 def _execute(conn: Any, sql: str, params: tuple | list = ()) -> Any:
-    return conn.execute(_adapt_sql(sql), params)
+    from src.observability.query_logger import timed_execute
+    adapted = _adapt_sql(sql)
+    return timed_execute(lambda q, p: conn.execute(q, p), conn, adapted, params)
 
 
 def _executescript(conn: Any, script: str) -> None:
@@ -498,6 +500,12 @@ def _migrate_extended_schema(conn: Any) -> None:
         "model_weights_json": "TEXT",
         "freshness_json": "TEXT",
         "live_prediction_json": "TEXT",
+        "feature_contributions_json": "TEXT",
+        "prediction_source_mode": "TEXT",
+        "explanation_json": "TEXT",
+        "completeness_flags_json": "TEXT",
+        "validation_status": "TEXT",
+        "validation_errors_json": "TEXT",
     }
     existing = _table_columns(conn, "predictions")
     for col, col_type in pred_cols.items():
@@ -659,7 +667,150 @@ def _migrate_extended_schema(conn: Any) -> None:
             """
         )
 
+    _ensure_pipeline_tables(conn)
     _ensure_optional_indexes(conn)
+
+
+def _ensure_pipeline_tables(conn: Any) -> None:
+    """Pipeline runs, progress tracking, UI cache tables, stage priors."""
+    serial = "SERIAL PRIMARY KEY" if config.USE_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    int_pk = "INTEGER PRIMARY KEY" if config.USE_POSTGRES else "INTEGER PRIMARY KEY"
+
+    if not _table_exists(conn, "pipeline_runs"):
+        conn.execute(f"""
+            CREATE TABLE pipeline_runs (
+                id {serial},
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                service_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                records_read INTEGER DEFAULT 0,
+                records_written INTEGER DEFAULT 0,
+                records_failed INTEGER DEFAULT 0,
+                duration_seconds REAL,
+                error_message TEXT,
+                triggered_by TEXT DEFAULT 'scheduler'
+            )
+        """)
+
+    if not _table_exists(conn, "pipeline_progress"):
+        fk = "REFERENCES pipeline_runs(id) ON DELETE CASCADE" if config.USE_POSTGRES else ""
+        conn.execute(f"""
+            CREATE TABLE pipeline_progress (
+                run_id {int_pk}{' ' + fk if fk else ''},
+                current_step TEXT NOT NULL,
+                step_index INTEGER NOT NULL,
+                total_steps INTEGER NOT NULL DEFAULT 10,
+                step_progress_pct REAL DEFAULT 0,
+                overall_progress_pct REAL DEFAULT 0,
+                message TEXT,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+    if not _table_exists(conn, "home_view_cache"):
+        conn.execute("""
+            CREATE TABLE home_view_cache (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                payload_json TEXT NOT NULL,
+                computed_at TEXT NOT NULL
+            )
+        """)
+
+    if not _table_exists(conn, "match_cards_cache"):
+        fk = "REFERENCES matches(id) ON DELETE CASCADE" if config.USE_POSTGRES else ""
+        conn.execute(f"""
+            CREATE TABLE match_cards_cache (
+                match_id {int_pk}{' ' + fk if fk else ''},
+                home_team TEXT NOT NULL,
+                away_team TEXT NOT NULL,
+                home_slug TEXT,
+                away_slug TEXT,
+                home_flag_url TEXT,
+                away_flag_url TEXT,
+                date TEXT NOT NULL,
+                status TEXT,
+                stage TEXT,
+                group_name TEXT,
+                home_goals INTEGER,
+                away_goals INTEGER,
+                predicted_home INTEGER,
+                predicted_away INTEGER,
+                home_win_prob REAL,
+                draw_prob REAL,
+                away_win_prob REAL,
+                exact_score_prob REAL,
+                confidence_pct REAL,
+                prediction_source_mode TEXT,
+                completeness_flags_json TEXT,
+                explanation_summary_json TEXT,
+                top_scorelines_json TEXT,
+                last_prediction_update TEXT,
+                computed_at TEXT NOT NULL
+            )
+        """)
+
+    if not _table_exists(conn, "team_cards_cache"):
+        fk = "REFERENCES teams(id) ON DELETE CASCADE" if config.USE_POSTGRES else ""
+        conn.execute(f"""
+            CREATE TABLE team_cards_cache (
+                team_id {int_pk}{' ' + fk if fk else ''},
+                name TEXT NOT NULL,
+                slug TEXT,
+                flag_url TEXT,
+                group_name TEXT,
+                rating REAL,
+                recent_form REAL,
+                injury_count INTEGER DEFAULT 0,
+                momentum_score REAL,
+                computed_at TEXT NOT NULL
+            )
+        """)
+
+    if not _table_exists(conn, "stage_goal_priors"):
+        conn.execute("""
+            CREATE TABLE stage_goal_priors (
+                stage_key TEXT PRIMARY KEY,
+                stage_label TEXT NOT NULL,
+                avg_total_goals REAL NOT NULL,
+                avg_home_goals REAL,
+                avg_away_goals REAL
+            )
+        """)
+        _seed_stage_goal_priors(conn)
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_pipeline_runs_service ON pipeline_runs(service_name, finished_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_match_cards_date ON match_cards_cache(date)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_match_cards_status ON match_cards_cache(status)"
+    )
+
+
+def _seed_stage_goal_priors(conn: Any) -> None:
+    """Historical WC average goals by stage (soft priors)."""
+    priors = [
+        ("group", "Group stage", 2.65, 1.42, 1.23),
+        ("round_of_32", "Round of 32", 2.55, 1.38, 1.17),
+        ("round_of_16", "Round of 16", 2.45, 1.32, 1.13),
+        ("quarter_finals", "Quarter-finals", 2.35, 1.28, 1.07),
+        ("semi_finals", "Semi-finals", 2.20, 1.18, 1.02),
+        ("third_place", "Third-place match", 2.80, 1.45, 1.35),
+        ("final", "Final", 2.10, 1.12, 0.98),
+    ]
+    for key, label, total, home, away in priors:
+        _execute(
+            conn,
+            """
+            INSERT INTO stage_goal_priors (stage_key, stage_label, avg_total_goals, avg_home_goals, avg_away_goals)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(stage_key) DO NOTHING
+            """,
+            (key, label, total, home, away),
+        )
 
 
 def _ensure_optional_indexes(conn: Any) -> None:
@@ -859,6 +1010,12 @@ def upsert_prediction(
     model_weights_json: Optional[dict[str, Any]] = None,
     freshness_json: Optional[dict[str, Any]] = None,
     live_prediction_json: Optional[dict[str, Any]] = None,
+    feature_contributions_json: Optional[dict[str, Any]] = None,
+    prediction_source_mode: Optional[str] = None,
+    explanation_json: Optional[dict[str, Any]] = None,
+    completeness_flags_json: Optional[dict[str, Any]] = None,
+    validation_status: Optional[str] = "valid",
+    validation_errors_json: Optional[list[str]] = None,
 ) -> None:
     now = datetime.utcnow().isoformat()
     if top_scorelines:
@@ -880,8 +1037,10 @@ def upsert_prediction(
                 ensemble_json, factor_breakdown_json,
                 lambda_home_mean, lambda_home_std, lambda_away_mean, lambda_away_std,
                 prediction_type, model_version, feature_version, data_snapshot_timestamp,
-                model_weights_json, freshness_json, live_prediction_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                model_weights_json, freshness_json, live_prediction_json,
+                feature_contributions_json, prediction_source_mode, explanation_json,
+                completeness_flags_json, validation_status, validation_errors_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(match_id) DO UPDATE SET
                 generated_at=excluded.generated_at,
                 predicted_home_goals=excluded.predicted_home_goals,
@@ -907,7 +1066,13 @@ def upsert_prediction(
                 data_snapshot_timestamp=excluded.data_snapshot_timestamp,
                 model_weights_json=excluded.model_weights_json,
                 freshness_json=excluded.freshness_json,
-                live_prediction_json=excluded.live_prediction_json
+                live_prediction_json=excluded.live_prediction_json,
+                feature_contributions_json=excluded.feature_contributions_json,
+                prediction_source_mode=excluded.prediction_source_mode,
+                explanation_json=excluded.explanation_json,
+                completeness_flags_json=excluded.completeness_flags_json,
+                validation_status=excluded.validation_status,
+                validation_errors_json=excluded.validation_errors_json
             """,
             (
                 match_id, now, predicted_home_goals, predicted_away_goals,
@@ -921,6 +1086,12 @@ def upsert_prediction(
                 json.dumps(model_weights_json) if model_weights_json is not None else None,
                 json.dumps(freshness_json) if freshness_json is not None else None,
                 json.dumps(live_prediction_json) if live_prediction_json is not None else None,
+                json.dumps(feature_contributions_json) if feature_contributions_json is not None else None,
+                prediction_source_mode,
+                json.dumps(explanation_json) if explanation_json is not None else None,
+                json.dumps(completeness_flags_json) if completeness_flags_json is not None else None,
+                validation_status,
+                json.dumps(validation_errors_json) if validation_errors_json is not None else None,
             ),
         )
 

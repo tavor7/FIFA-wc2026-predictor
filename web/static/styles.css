@@ -1098,3 +1098,88 @@ main .card + .section {
   color: var(--dim);
   font-size: 0.75rem;
 }
+
+.skeleton-card {
+  pointer-events: none;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.sk-line, .sk-block, .sk-score {
+  background: linear-gradient(90deg, rgba(148,163,184,0.15), rgba(148,163,184,0.28), rgba(148,163,184,0.15));
+  border-radius: 6px;
+  height: 12px;
+  margin-bottom: 10px;
+}
+.sk-w60 { width: 60%; }
+.sk-w100 { width: 100%; }
+.sk-row { display: flex; gap: 12px; align-items: center; margin: 14px 0; }
+.sk-block { flex: 1; height: 48px; }
+.sk-score { width: 64px; height: 36px; }
+@keyframes pulse {
+  0%, 100% { opacity: 0.65; }
+  50% { opacity: 1; }
+}
+
+.progress-panel {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.5);
+}
+.progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+.progress-track {
+  height: 8px;
+  background: rgba(148,163,184,0.2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+  transition: width 0.4s ease;
+}
+.progress-steps {
+  display: flex;
+  gap: 4px;
+  margin-top: 0.6rem;
+  flex-wrap: wrap;
+}
+.step-dot {
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(148,163,184,0.15);
+  color: var(--muted);
+}
+.step-dot.active { background: #22c55e; color: #052e16; font-weight: 700; }
+.step-dot.done { background: rgba(34,197,94,0.35); color: #bbf7d0; }
+
+.data-freshness-badge {
+  display: inline-flex;
+  gap: 0.6rem;
+  align-items: center;
+  font-size: 0.78rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  margin-bottom: 0.75rem;
+}
+.badge-fresh { background: rgba(34,197,94,0.15); color: #86efac; }
+.badge-stale { background: rgba(251,191,36,0.15); color: #fcd34d; }
+.cache-tag { font-size: 0.7rem; opacity: 0.8; }
+.source-badge {
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(59,130,246,0.2);
+  color: #93c5fd;
+}
+.admin-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.factor-pos { color: #86efac; }
+.factor-neg { color: #fca5a5; }
+.prob-note { font-size: 0.88rem; line-height: 1.45; }
+.pred-headline { font-size: 1.1rem; margin-bottom: 0.5rem; }

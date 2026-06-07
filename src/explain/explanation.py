@@ -151,3 +151,68 @@ def generate_explanation(
         f"{top.get('away', predicted_away)} ({prob_pct:.0%} probability). "
         "Research estimate only — not betting advice. Not affiliated with FIFA."
     )
+
+
+def build_structured_explanation(
+    home_team: str,
+    away_team: str,
+    predicted_home: int,
+    predicted_away: int,
+    features: MatchFeatures,
+    top_scorelines: list[dict[str, Any]],
+    outcomes: dict[str, float],
+    positive_factors: list[str] | None = None,
+    negative_factors: list[str] | None = None,
+    lambda_home: float | None = None,
+    lambda_away: float | None = None,
+    lambda_home_std: float | None = None,
+    lambda_away_std: float | None = None,
+) -> dict[str, Any]:
+    """Structured explanation for API/UI — separates outcome vs exact-score interpretation."""
+    best = top_scorelines[0] if top_scorelines else {"home": predicted_home, "away": predicted_away, "probability": 0.1}
+    best_prob = float(best.get("probability", 0))
+    draw_pct = round(float(outcomes.get("draw", 0)) * 100, 1)
+
+    positives = list(positive_factors or [])
+    negatives = list(negative_factors or [])
+    missing: list[str] = []
+
+    meta = features.metadata
+    if meta.get("starting_xi_strength_home_source") == "heuristic_default":
+        missing.append("confirmed lineups unavailable")
+    if not meta.get("referee_data"):
+        missing.append("referee data unavailable")
+    if meta.get("form_home_source") in ("prior", "insufficient_data"):
+        missing.append("limited recent form history")
+
+    for flag, val in features.missing_flags.items():
+        if val and len(missing) < 6:
+            missing.append(flag.replace("_", " ") + " unavailable")
+
+    probability_note = (
+        f"Most likely exact score: {best.get('home', predicted_home)}–{best.get('away', predicted_away)}, "
+        f"probability {best_prob * 100:.0f}%. "
+        f"Draw probability: {draw_pct}%. "
+        "Exact-score probability is naturally low (often 8–15%) — it is the single most likely line, "
+        "not overall match confidence."
+    )
+
+    return {
+        "predicted_score": f"{home_team} {predicted_home}–{predicted_away} {away_team}",
+        "predicted_home": predicted_home,
+        "predicted_away": predicted_away,
+        "top_scorelines": top_scorelines[:5],
+        "outcome_probs": {
+            "home_win": round(float(outcomes.get("home_win", 0)) * 100, 1),
+            "draw": draw_pct,
+            "away_win": round(float(outcomes.get("away_win", 0)) * 100, 1),
+        },
+        "expected_goals": {
+            "home": {"mean": lambda_home, "std": lambda_home_std},
+            "away": {"mean": lambda_away, "std": lambda_away_std},
+        },
+        "positive_factors": positives[:5],
+        "negative_factors": negatives[:5],
+        "missing_data": list(dict.fromkeys(missing))[:6],
+        "probability_note": probability_note,
+    }

@@ -42,14 +42,24 @@ def prediction_payload(pred: dict[str, Any] | None) -> dict[str, Any] | None:
     return p
 
 
+def _parse_json_field(val: Any) -> Any:
+    if isinstance(val, str) and val:
+        try:
+            return json.loads(val)
+        except json.JSONDecodeError:
+            return None
+    return val
+
+
 def _list_prediction_dict(p: dict[str, Any]) -> dict[str, Any]:
     """Lightweight prediction for match cards — skips heavy ensemble JSON."""
     top_raw = p.get("top_scorelines_json")
-    top_scorelines = json.loads(top_raw) if isinstance(top_raw, str) and top_raw else []
+    top_scorelines = json.loads(top_raw) if isinstance(top_raw, str) and top_raw else p.get("top_scorelines") or []
     best = top_scorelines[0] if top_scorelines else {}
-    # Stored picks may be legacy λ decimals — prefer Poisson mode from top_scorelines
     pick_h = int(best.get("home", round(float(p.get("predicted_home_goals") or 0))))
     pick_a = int(best.get("away", round(float(p.get("predicted_away_goals") or 0))))
+    expl_json = _parse_json_field(p.get("explanation_json"))
+    completeness = _parse_json_field(p.get("completeness_flags_json"))
     return {
         "predicted_home_goals": pick_h,
         "predicted_away_goals": pick_a,
@@ -57,12 +67,15 @@ def _list_prediction_dict(p: dict[str, Any]) -> dict[str, Any]:
         "draw_prob": p["draw_prob"],
         "away_win_prob": p["away_win_prob"],
         "exact_score_prob": p.get("exact_score_prob"),
-        "top_scorelines": top_scorelines[:1],
+        "top_scorelines": top_scorelines[:3],
         "explanation": p.get("explanation"),
+        "explanation_json": expl_json,
         "generated_at": p.get("generated_at"),
         "confidence_pct": p.get("confidence_pct"),
         "data_completeness_pct": p.get("data_completeness_pct"),
         "model_agreement": p.get("model_agreement"),
+        "prediction_source_mode": p.get("prediction_source_mode"),
+        "completeness_flags": completeness,
         "lambda_home_mean": p.get("lambda_home_mean"),
         "lambda_home_std": p.get("lambda_home_std"),
         "lambda_away_mean": p.get("lambda_away_mean"),
@@ -140,6 +153,11 @@ def match_with_prediction(row) -> dict[str, Any]:
             "freshness_json": p.get("freshness_json"),
             "staleness_warnings": p.get("staleness_warnings") or [],
             "live_prediction_json": p.get("live_prediction_json"),
+            "explanation_json": _parse_json_field(p.get("explanation_json")),
+            "feature_contributions": _parse_json_field(p.get("feature_contributions_json")),
+            "prediction_source_mode": p.get("prediction_source_mode"),
+            "completeness_flags": _parse_json_field(p.get("completeness_flags_json")),
+            "validation_status": p.get("validation_status"),
         }
     m["home"] = team_meta(m["home_team"])
     m["away"] = team_meta(m["away_team"])

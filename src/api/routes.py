@@ -8,13 +8,25 @@ from typing import Any
 
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from src import db
 from src import db_extended as ext
 from src.analytics.momentum import MomentumEngine
 from src.analytics.team_form import TeamFormAnalyzer
+from src.api.admin_auth import require_admin, verify_password
 from src.api.helpers import home_dashboard, match_with_prediction, matches_with_predictions, row_to_dict, team_meta
+from src.api import screen_handlers
+from src import db_pipeline as pipe_db
+from src.cache.response_cache import (
+    cache_key,
+    get_cache_meta,
+    get_cached,
+    invalidate_all,
+    set_cached,
+    _ttl_for_path,
+)
+from src.services.pipeline_orchestrator import run_pipeline_async
 from src.db import db_backend
 from src.services.data_sync_service import DataSyncService
 from src.services.model_training_service import ModelTrainingService
@@ -89,9 +101,32 @@ def stats() -> dict[str, int]:
 
 
 @router.get("/home")
-def home(limit: int = 48) -> dict[str, Any]:
-    """Matches page: stats + upcoming in one fast read."""
-    return home_dashboard(limit=limit)
+def home(limit: int = 8) -> dict[str, Any]:
+    """Home screen: stats + live + next N upcoming matches."""
+    key = cache_key("/home", f"limit={limit}")
+    hit = get_cached(key)
+    if hit is not None:
+        return hit
+    payload = screen_handlers.get_home_screen(limit=limit)
+    set_cached(key, payload, _ttl_for_path("/home"))
+    return payload
+
+
+@router.get("/matches")
+def matches_list(
+    status: str = "upcoming",
+    stage: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> dict[str, Any]:
+    """Paginated matches list from read-model cache."""
+    key = cache_key("/matches", f"status={status}&stage={stage}&page={page}&size={page_size}")
+    hit = get_cached(key)
+    if hit is not None:
+        return hit
+    payload = screen_handlers.get_matches_screen(status=status, stage=stage, page=page, page_size=page_size)
+    set_cached(key, payload, _ttl_for_path("/matches"))
+    return payload
 
 
 @router.get("/matches/upcoming")
@@ -216,6 +251,14 @@ def prediction_history(match_id: int) -> dict[str, Any]:
 
 @router.get("/matches/{match_id}")
 def match_detail(match_id: int) -> dict[str, Any]:
+    detail = screen_handlers.get_match_detail_screen(match_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Match not found")
+    return detail
+
+
+@router.get("/matches/{match_id}/legacy")
+def match_detail_legacy(match_id: int) -> dict[str, Any]:
     row = db.get_match_by_id(match_id)
     if not row:
         raise HTTPException(status_code=404, detail="Match not found")
@@ -337,23 +380,53 @@ def reports_summary() -> dict[str, Any]:
 
 @router.get("/monitor/status")
 def monitor_status() -> dict[str, Any]:
+    key = cache_key("/monitor/status")
+    hit = get_cached(key)
+    if hit is not None:
+        return hit
     logs = ext.get_recent_sync_logs(limit=10)
     keys = api_keys_status()
-    counts = table_counts()
+    payload = screen_handlers.get_monitor_screen()
+    payload["api_keys"] = keys
+    payload["recent_jobs"] = [row_to_dict(l) for l in logs]
+    payload["models"] = {"ensemble": True, "elo": True, "xgboost_optional": True}
+    payload["hints"] = _data_feed_hints(keys, payload.get("counts", {}))
+    set_cached(key, payload, _ttl_for_path("/monitor/status"))
+    return payload
+
+
+@router.post("/admin/auth")
+def admin_auth(body: dict[str, str]) -> dict[str, Any]:
+    password = body.get("password", "")
+    result = verify_password(password)
+    if not result:
+        raise HTTPException(status_code=401, detail="Invalid admin password")
+    return result
+
+
+@router.get("/admin/pipeline/status")
+def admin_pipeline_status(_auth: None = Depends(require_admin)) -> dict[str, Any]:
     return {
-        "database": db_backend(),
-        "health": "ok",
-        "api_keys": keys,
-        "table_counts": counts,
-        "recent_jobs": [row_to_dict(l) for l in logs],
-        "stats": {
-            "upcoming": len(db.get_upcoming_matches(limit=200)),
-            "predictions": len(db.get_all_predictions()),
-            "teams": len(ext.get_all_teams()),
-        },
-        "models": {"ensemble": True, "elo": True, "xgboost_optional": True},
-        "hints": _data_feed_hints(keys, counts),
+        "runs": pipe_db.get_latest_pipeline_runs_per_service(),
+        "active": pipe_db.get_active_pipeline_progress(),
     }
+
+
+@router.get("/admin/pipeline/progress")
+def admin_pipeline_progress() -> dict[str, Any]:
+    return pipe_db.get_active_pipeline_progress()
+
+
+@router.post("/admin/pipeline/run")
+def admin_pipeline_run(
+    mode: str = "full_pipeline",
+    _auth: None = Depends(require_admin),
+) -> dict[str, Any]:
+    if mode not in ("full_pipeline", "data_sync_only", "features_only", "predictions_only"):
+        raise HTTPException(status_code=400, detail="Invalid pipeline mode")
+    run_id = run_pipeline_async(mode=mode, triggered_by="admin")
+    invalidate_all()
+    return {"status": "started", "run_id": run_id, "mode": mode}
 
 
 def _data_feed_hints(keys: dict[str, Any], counts: dict[str, int]) -> list[str]:
@@ -394,7 +467,11 @@ def sync_inj() -> dict[str, Any]:
 
 
 @router.post("/sync/full")
-def sync_full(bg: BackgroundTasks, include_predictions: bool = False) -> dict[str, str]:
+def sync_full(
+    bg: BackgroundTasks,
+    include_predictions: bool = False,
+    _auth: None = Depends(require_admin),
+) -> dict[str, str]:
     bg.add_task(_run_full_sync if include_predictions else _run_data_sync_only)
     return {
         "status": "started",
@@ -404,7 +481,7 @@ def sync_full(bg: BackgroundTasks, include_predictions: bool = False) -> dict[st
 
 
 @router.post("/admin/predictions/refresh")
-def admin_refresh_predictions(bg: BackgroundTasks) -> dict[str, str]:
+def admin_refresh_predictions(bg: BackgroundTasks, _auth: None = Depends(require_admin)) -> dict[str, str]:
     def _job() -> None:
         PredictionGenerationService().generate_all()
 

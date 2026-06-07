@@ -356,3 +356,97 @@ CREATE TABLE IF NOT EXISTS backtest_runs (
     run_at TEXT NOT NULL,
     metrics_json TEXT NOT NULL
 );
+
+-- Pipeline orchestration & UI read-model caches
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    id SERIAL PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    service_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    records_read INTEGER DEFAULT 0,
+    records_written INTEGER DEFAULT 0,
+    records_failed INTEGER DEFAULT 0,
+    duration_seconds REAL,
+    error_message TEXT,
+    triggered_by TEXT DEFAULT 'scheduler'
+);
+
+CREATE TABLE IF NOT EXISTS pipeline_progress (
+    run_id INTEGER PRIMARY KEY REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+    current_step TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    total_steps INTEGER NOT NULL DEFAULT 10,
+    step_progress_pct REAL DEFAULT 0,
+    overall_progress_pct REAL DEFAULT 0,
+    message TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS home_view_cache (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    payload_json TEXT NOT NULL,
+    computed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS match_cards_cache (
+    match_id INTEGER PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,
+    home_team TEXT NOT NULL,
+    away_team TEXT NOT NULL,
+    home_slug TEXT,
+    away_slug TEXT,
+    home_flag_url TEXT,
+    away_flag_url TEXT,
+    date TEXT NOT NULL,
+    status TEXT,
+    stage TEXT,
+    group_name TEXT,
+    home_goals INTEGER,
+    away_goals INTEGER,
+    predicted_home INTEGER,
+    predicted_away INTEGER,
+    home_win_prob REAL,
+    draw_prob REAL,
+    away_win_prob REAL,
+    exact_score_prob REAL,
+    confidence_pct REAL,
+    prediction_source_mode TEXT,
+    completeness_flags_json TEXT,
+    explanation_summary_json TEXT,
+    top_scorelines_json TEXT,
+    last_prediction_update TEXT,
+    computed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS team_cards_cache (
+    team_id INTEGER PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    slug TEXT,
+    flag_url TEXT,
+    group_name TEXT,
+    rating REAL,
+    recent_form REAL,
+    injury_count INTEGER DEFAULT 0,
+    momentum_score REAL,
+    computed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS stage_goal_priors (
+    stage_key TEXT PRIMARY KEY,
+    stage_label TEXT NOT NULL,
+    avg_total_goals REAL NOT NULL,
+    avg_home_goals REAL,
+    avg_away_goals REAL
+);
+
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS feature_contributions_json TEXT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS prediction_source_mode TEXT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS explanation_json TEXT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS completeness_flags_json TEXT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS validation_status TEXT DEFAULT 'valid';
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS validation_errors_json TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_service ON pipeline_runs(service_name, finished_at DESC);
+CREATE INDEX IF NOT EXISTS idx_match_cards_date ON match_cards_cache(date);
+CREATE INDEX IF NOT EXISTS idx_match_cards_status ON match_cards_cache(status);
+CREATE INDEX IF NOT EXISTS idx_match_cards_stage ON match_cards_cache(stage, group_name);

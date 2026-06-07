@@ -6,6 +6,7 @@ import {
   timelineHtml, lineupsHtml, statsGridHtml,
   factorChartHtml, renderFactorChart, simChartHtml, renderSimChart,
   liveProbChartHtml, renderLiveProbChart,
+  progressBarHtml, dataFreshnessBadge,
   formatDate,
   formatDateIsrael,
   formatPct,
@@ -36,12 +37,18 @@ function regionalVenueCard(form) {
 
 export async function pageMatches() {
   const data = await request("/home");
+  window.setPageMeta?.({ lastUpdated: data.last_updated });
   const stats = data.stats || {};
   const matches = data.matches || [];
-  return disclaimerHtml() + statsHtml(stats) +
-    (matches.length
-      ? matches.map((m) => matchCardHtml(m)).join("")
-      : `<p class="empty">No matches yet. Click <strong>Sync data</strong> to load fixtures.</p>`);
+  const live = data.live || [];
+  let html = disclaimerHtml() + statsHtml(stats);
+  if (live.length) {
+    html += section("Live now", live.map((m) => matchCardHtml(m)).join(""));
+  }
+  html += matches.length
+    ? matches.map((m) => matchCardHtml(m)).join("")
+    : `<p class="empty">No matches yet. Open <a href="#/monitor">Monitor</a> to run the data pipeline (admin).</p>`;
+  return html;
 }
 
 export async function pageLive() {
@@ -179,14 +186,21 @@ export async function pageMatch(id) {
     }
   } catch { /* optional */ }
 
-  if (pred?.explanation) {
-    const alts = pred.top_scorelines?.slice(1, 5) ?? [];
-    html += section("Why this pick?", `<p>${escapeHtml(pred.explanation)}</p>` +
-      (alts.length
-        ? `<div class="chips">${alts.map((s) =>
-            `<span class="chip">${s.home}–${s.away} · ${(s.probability * 100).toFixed(0)}%</span>`
-          ).join("")}</div>`
-        : ""));
+  const ej = pred?.explanation_json;
+  if (ej || pred?.explanation) {
+    const alts = (ej?.top_scorelines || pred?.top_scorelines)?.slice(0, 5) ?? [];
+    const pos = (ej?.positive_factors || []).map((f) => `<li class="factor-pos">+ ${escapeHtml(f)}</li>`).join("");
+    const neg = (ej?.negative_factors || []).map((f) => `<li class="factor-neg">− ${escapeHtml(f)}</li>`).join("");
+    const missing = (ej?.missing_data || []).map((f) => `<li>${escapeHtml(f)}</li>`).join("");
+    html += section("Why this pick?", `
+      ${ej?.predicted_score ? `<p class="pred-headline"><strong>${escapeHtml(ej.predicted_score)}</strong></p>` : ""}
+      ${ej?.probability_note ? `<p class="prob-note muted">${escapeHtml(ej.probability_note)}</p>` : `<p>${escapeHtml(pred.explanation || "")}</p>`}
+      ${alts.length ? `<div class="chips">${alts.map((s) =>
+        `<span class="chip">${s.home}–${s.away} · ${(s.probability * 100).toFixed(0)}%</span>`
+      ).join("")}</div>` : ""}
+      ${pos || neg ? `<ul class="factor-list">${pos}${neg}</ul>` : ""}
+      ${missing ? section("Missing data", `<ul>${missing}</ul>`) : ""}
+    `);
   }
 
   if (match.events?.length) {
@@ -354,61 +368,70 @@ export async function pageMonitor() {
     request("/monitor/status"),
     request("/meta/freshness").catch(() => null),
   ]);
+  window.setPageMeta?.({ lastUpdated: status.last_updated });
   const calibration = await request("/evaluation/calibration?limit=30").catch(() => null);
+  const dep = status.deployment || {};
+  const counts = status.counts || status.table_counts || {};
 
-  const jobs = (status.recent_jobs || []).map(
-    (j) => `<tr>
-      <td>${escapeHtml(j.job_name || j.job || "—")}</td>
-      <td><span class="status-${(j.status || "").toLowerCase()}">${escapeHtml(j.status || "—")}</span></td>
-      <td>${j.records_processed ?? j.records ?? "—"}</td>
-      <td>${formatDateIsrael(j.finished_at || j.started_at || "")}</td>
+  const pipelineRows = (status.pipeline_runs || []).map(
+    (r) => `<tr>
+      <td>${escapeHtml(r.service_name || "—")}</td>
+      <td><span class="status-${(r.status || "").toLowerCase()}">${escapeHtml(r.status || "—")}</span></td>
+      <td>${r.records_written ?? "—"}</td>
+      <td>${r.duration_seconds != null ? `${r.duration_seconds}s` : "—"}</td>
+      <td>${formatDateIsrael(r.finished_at || r.started_at || "")}</td>
     </tr>`
   );
 
-  const entities = (freshness?.entities || []).slice(0, 8).map(
-    (e) => `<tr>
-      <td>${escapeHtml(e.entity || "—")}</td>
-      <td>${Math.round(e.completeness_pct || 0)}%</td>
-      <td>${escapeHtml(e.source || "—")}</td>
-      <td>${formatDateIsrael(e.last_updated || "")}</td>
-    </tr>`
-  );
+  const failedRows = (status.failed_jobs || []).map(
+    (r) => `<li><strong>${escapeHtml(r.service_name)}</strong>: ${escapeHtml(r.error_message || "failed")}</li>`
+  ).join("");
 
-  const counts = status.table_counts || {};
-  const countRows = Object.entries(counts)
-    .filter(([, n]) => n >= 0)
-    .map(([t, n]) => `<tr><td>${escapeHtml(t)}</td><td><strong>${n}</strong></td></tr>`);
+  const countRows = [
+    ["Fixtures", counts.fixtures ?? counts.matches],
+    ["Teams", counts.teams],
+    ["Players", counts.players],
+    ["Injuries", counts.injuries],
+    ["Predictions", counts.predictions],
+    ["Missing predictions", counts.missing_predictions],
+  ].map(([t, n]) => `<tr><td>${escapeHtml(t)}</td><td><strong>${n ?? 0}</strong></td></tr>`);
 
-  const hints = (status.hints || []).map((h) => `<li>${escapeHtml(h)}</li>`).join("");
   const keys = status.api_keys || {};
 
   return disclaimerHtml(true) +
-    `<h2 class="page-title">System monitor</h2>` +
-    `<div class="page-intro">
-      <button id="btn-admin-predict" class="btn-primary" type="button">Admin: refresh predictions</button>
-      <span class="muted">User sync only updates data — predictions run on the scheduler.</span>
+    `<h2 class="page-title">Data Pipeline Status</h2>` +
+    `${dataFreshnessBadge(status.last_updated)}` +
+    progressBarHtml("pipeline-progress") +
+    `<div class="page-intro admin-actions">
+      <button id="btn-admin-predict" class="btn-secondary" type="button">Refresh predictions</button>
+      <button class="btn-primary" type="button" data-pipeline-mode="full_pipeline">Run full pipeline</button>
+      <button class="btn-secondary" type="button" data-pipeline-mode="data_sync_only">Sync data only</button>
+      <button class="btn-secondary" type="button" data-pipeline-mode="predictions_only">Predictions only</button>
+      <span class="muted">Admin password required. Normal browsing uses read-only GET endpoints.</span>
     </div>` +
+    section("Deployment", `<div class="form-grid">
+      <div class="form-card"><span>App version</span><strong>${escapeHtml(dep.app_version || "—")}</strong></div>
+      <div class="form-card"><span>Git commit</span><strong>${escapeHtml((dep.git_commit || "—").slice(0, 8))}</strong></div>
+      <div class="form-card"><span>DB latency</span><strong>${dep.database_latency_ms ?? "—"} ms</strong></div>
+      <div class="form-card"><span>Scheduler</span><strong>${dep.scheduler_enabled ? "enabled" : "disabled"}</strong></div>
+      <div class="form-card"><span>Started</span><strong>${formatDateIsrael(dep.app_start_time || "")}</strong></div>
+      <div class="form-card"><span>Last heartbeat</span><strong>${formatDateIsrael(dep.last_scheduler_heartbeat || "")}</strong></div>
+    </div>`) +
+    section("Data loaded", tableHtml(["Entity", "Count"], countRows)) +
+    section("Pipeline runs (latest per service)", tableHtml(
+      ["Service", "Status", "Written", "Duration", "Finished"],
+      pipelineRows.length ? pipelineRows : [`<tr><td colspan="5">No pipeline runs yet — run full pipeline from admin.</td></tr>`]
+    )) +
+    (failedRows ? section("Failed jobs", `<ul>${failedRows}</ul>`) : "") +
     section("Health", `<div class="form-grid">
       <div class="form-card"><span>Database</span><strong>${escapeHtml(status.database || "—")}</strong></div>
-      <div class="form-card"><span>Status</span><strong class="status-ok">${escapeHtml(status.health || "ok")}</strong></div>
-      <div class="form-card"><span>API-Football key</span><strong>${keys.api_football ? "Set" : "Missing"}</strong></div>
-      <div class="form-card"><span>football-data key</span><strong>${keys.football_data ? "Set" : "Missing"}</strong></div>
+      <div class="form-card"><span>API-Football</span><strong>${keys.api_football ? "Set" : "Missing"}</strong></div>
+      <div class="form-card"><span>football-data</span><strong>${keys.football_data ? "Set" : "Missing"}</strong></div>
     </div>`) +
-    (hints ? section("Next steps", `<ul>${hints}</ul>`) : "") +
-    section("Table rows", tableHtml(["Table", "Rows"], countRows.length ? countRows : [`<tr><td colspan="2">No counts</td></tr>`])) +
-    section("Stats", statsHtml(status.stats || {})) +
-    section("Recent sync jobs", tableHtml(["Job", "Status", "Records", "Finished (Israel)"], jobs.length ? jobs : [`<tr><td colspan="4">No jobs logged yet</td></tr>`])) +
     (calibration?.samples
       ? section("Model calibration", `<div class="form-grid">
           <div class="form-card"><span>Brier</span><strong>${calibration.brier_score ?? "—"}</strong></div>
-          <div class="form-card"><span>Log loss</span><strong>${calibration.log_loss ?? "—"}</strong></div>
           <div class="form-card"><span>Samples</span><strong>${calibration.samples}</strong></div>
         </div>`)
-      : "") +
-    (freshness?.staleness_warnings?.length
-      ? section("Stale data warnings", `<ul>${freshness.staleness_warnings.map((w) =>
-          `<li>${escapeHtml(w)}</li>`
-        ).join("")}</ul>`)
-      : "") +
-    section("Data freshness", tableHtml(["Entity", "Complete", "Source", "Updated (Israel)"], entities.length ? entities : [`<tr><td colspan="4">No freshness data</td></tr>`]));
+      : "");
 }

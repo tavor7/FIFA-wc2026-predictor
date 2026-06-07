@@ -57,8 +57,10 @@ export function MatchCard({ match, onPress }: Props) {
               Exact {top.home}–{top.away}: {(top.probability * 100).toFixed(0)}%
             </Text>
           )}
-          {!hasScore && !exactDiffers && pickPct > 0 && (
-            <Text style={styles.conf}>{(pickPct * 100).toFixed(0)}% likely</Text>
+          {!hasScore && pickPct > 0 && (
+            <Text style={styles.conf}>
+              Most likely {pickHome}–{pickAway}: {(pickPct * 100).toFixed(0)}%
+            </Text>
           )}
         </View>
         <Text style={[styles.team, styles.right]} numberOfLines={2}>

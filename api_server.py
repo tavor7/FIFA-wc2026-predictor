@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from starlette.responses import Response
 
 from src import db
 from src.api.routes import router
+from src.cache.response_cache import cache_key, get_cache_meta, get_cached, set_cached, _ttl_for_path
 from src.model_storage import load_models_on_startup, save_models_after_train
 from src.scheduler import start_scheduler, stop_scheduler
 from src.seed.load_seeds import ensure_baseline_data
@@ -41,31 +43,47 @@ def _startup_seed_worker() -> None:
 
 def _delayed_scheduler_start() -> None:
     """Start cron jobs after deploy health check passes."""
-    import time
+    import time as _time
 
-    time.sleep(30)
+    _time.sleep(30)
     if ENABLE_SCHEDULER:
         start_scheduler()
         logger.info("Background scheduler enabled (delayed start)")
 
 
-class CacheControlMiddleware(BaseHTTPMiddleware):
-    """Short cache for read-only GET JSON endpoints."""
+class TimingAndCacheMiddleware(BaseHTTPMiddleware):
+    """Response timing headers + HTTP cache-control for read endpoints."""
 
     CACHE_PATHS = (
         "/home",
+        "/matches",
         "/teams",
         "/tournament/",
         "/players/",
         "/meta/freshness",
-        "/matches/upcoming",
-        "/matches/recent",
+        "/monitor/status",
     )
 
     async def dispatch(self, request: Request, call_next) -> Response:
+        t0 = time.perf_counter()
         response = await call_next(request)
-        if request.method == "GET" and any(request.url.path.startswith(p) for p in self.CACHE_PATHS):
-            response.headers["Cache-Control"] = "public, max-age=60"
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+
+        response.headers["X-Response-Time-ms"] = str(elapsed_ms)
+        meta = get_cache_meta()
+        if meta.get("data_version"):
+            response.headers["X-Data-Version"] = meta["data_version"]
+        if meta.get("last_prediction_update"):
+            response.headers["X-Last-Prediction-Update"] = meta["last_prediction_update"]
+
+        if request.method == "GET":
+            key = cache_key(request.url.path, str(request.url.query))
+            response.headers["X-Cache"] = "HIT" if get_cached(key) is not None else "MISS"
+            if any(request.url.path.startswith(p) for p in self.CACHE_PATHS):
+                ttl = _ttl_for_path(request.url.path)
+                if ttl:
+                    response.headers["Cache-Control"] = f"public, max-age={min(ttl, 120)}"
+
         return response
 
 
@@ -85,11 +103,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="WC 2026 Research API",
     description="Designed by Amit Tavor. Research recommendation system.",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
-app.add_middleware(CacheControlMiddleware)
+app.add_middleware(TimingAndCacheMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

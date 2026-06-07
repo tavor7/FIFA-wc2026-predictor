@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   Pressable,
   RefreshControl,
@@ -9,6 +8,7 @@ import {
   View,
 } from "react-native";
 import { MatchCard } from "@/components/MatchCard";
+import { SkeletonCard } from "@/components/SkeletonCard";
 import { DisclaimerBanner } from "@/components/DisclaimerBanner";
 import { Footer } from "@/components/Footer";
 import { api } from "@/services/api";
@@ -21,16 +21,19 @@ export default function MatchesScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
 
   const load = useCallback(async (refresh = false) => {
     try {
       setError(null);
       if (refresh) setRefreshing(true);
       else setLoading(true);
-      await api.bootstrap().catch(() => null);
-      const [m, s] = await Promise.all([api.upcoming(), api.stats()]);
-      setMatches(m);
-      setStats(s);
+      const data = await api.home();
+      const live = data.live ?? [];
+      const upcoming = data.matches ?? [];
+      setMatches([...live, ...upcoming]);
+      setStats(data.stats);
+      setLastUpdated(data.last_updated ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
@@ -43,21 +46,13 @@ export default function MatchesScreen() {
     load();
   }, [load]);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await api.refresh();
-      await load(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Refresh failed");
-      setRefreshing(false);
-    }
-  };
-
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator color={colors.text} />
+      <View style={styles.content}>
+        <DisclaimerBanner />
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
       </View>
     );
   }
@@ -69,11 +64,14 @@ export default function MatchesScreen() {
       data={matches}
       keyExtractor={(m) => String(m.id)}
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} />
+        <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={colors.text} />
       }
       ListHeaderComponent={
         <>
           <DisclaimerBanner />
+          {lastUpdated && (
+            <Text style={styles.freshness}>Updated {new Date(lastUpdated).toLocaleString()}</Text>
+          )}
           {stats && (
             <View style={styles.stats}>
               <Stat label="Upcoming" value={stats.upcoming} />
@@ -90,7 +88,7 @@ export default function MatchesScreen() {
             </View>
           )}
           {!matches.length && !error && (
-            <Text style={styles.empty}>No matches. Pull down to refresh.</Text>
+            <Text style={styles.empty}>No matches loaded yet.</Text>
           )}
         </>
       }
@@ -112,7 +110,6 @@ function Stat({ label, value }: { label: string; value: number }) {
 const styles = StyleSheet.create({
   list: { flex: 1, backgroundColor: colors.bg },
   content: { padding: spacing.md, paddingBottom: spacing.xl },
-  center: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: colors.bg },
   stats: {
     flexDirection: "row",
     gap: spacing.sm,
@@ -129,6 +126,7 @@ const styles = StyleSheet.create({
   },
   statVal: { fontSize: 20, fontWeight: "700", color: colors.text },
   statLbl: { fontSize: 10, color: colors.textMuted, marginTop: 2, fontWeight: "500" },
+  freshness: { fontSize: 11, color: colors.textMuted, marginBottom: spacing.sm },
   errorBox: {
     backgroundColor: colors.surface,
     padding: spacing.md,

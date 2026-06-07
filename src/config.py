@@ -69,6 +69,11 @@ ELO_HOST_BOOST_POINTS: float = float(_env("ELO_HOST_BOOST_POINTS", "35"))
 FC26_WEIGHT_CAP: float = float(_env("FC26_WEIGHT_CAP", "0.35"))
 STALE_DATA_HOURS: int = int(_env("STALE_DATA_HOURS", "24"))
 
+# Admin & deployment diagnostics
+ADMIN_PASSWORD: str = _env("ADMIN_PASSWORD")
+APP_VERSION: str = _env("APP_VERSION", "2.1.0")
+GIT_COMMIT: str = _env("GIT_COMMIT") or _env("RENDER_GIT_COMMIT", "local")
+
 # Position importance weights for player strength
 POSITION_IMPORTANCE: dict[str, float] = {
     "G": 0.6,

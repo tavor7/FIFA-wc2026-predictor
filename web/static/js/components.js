@@ -167,11 +167,16 @@ export function matchCardHtml(match, { clickable = true, linkPrefix = "#/match" 
       ? `<span class="badge badge-finished">FINAL</span>`
       : `<span class="badge badge-upcoming">UPCOMING</span>`;
 
+  const sourceBadge = pred?.prediction_source_mode
+    ? `<span class="source-badge">${escapeHtml(pred.prediction_source_mode.replace(/_/g, " "))}</span>`
+    : "";
+
   const pickRow = hasScore
     ? `<div class="pick-row"><span class="pick-label">FINAL</span></div>`
     : `<div class="pick-row">
         <span class="pick-label">PICK</span>
-        ${pickPct > 0 ? `<span class="pick-conf">${(pickPct * 100).toFixed(0)}% likely</span>` : ""}
+        ${pickPct > 0 ? `<span class="pick-conf" title="Exact-score probability is naturally low">Most likely: ${pickHome}–${pickAway} (${(pickPct * 100).toFixed(0)}%)</span>` : ""}
+        ${sourceBadge}
       </div>`;
 
   const teamCol = (name, meta, side) =>
@@ -218,10 +223,67 @@ export function tableHtml(headers, rows) {
   </table></div>`;
 }
 
-export function freshnessBarHtml(data) {
-  if (!data?.warnings?.length) return "";
-  const w = data.warnings[0];
-  return `<div class="freshness-warn">⚠ ${escapeHtml(w.entity || "Data")}: ${Math.round(w.completeness_pct || 0)}% complete — some features use fallback priors.</div>`;
+export function skeletonCardsHtml(n = 4) {
+  return Array.from({ length: n }, () =>
+    `<article class="card skeleton-card">
+      <div class="sk-line sk-w60"></div>
+      <div class="sk-row"><div class="sk-block"></div><div class="sk-score"></div><div class="sk-block"></div></div>
+      <div class="sk-line sk-w100"></div>
+    </article>`
+  ).join("");
+}
+
+export function dataFreshnessBadge(lastUpdated, meta = {}) {
+  if (!lastUpdated && !meta.dataVersion) return "";
+  const ts = lastUpdated ? formatDateIsrael(lastUpdated) : "—";
+  const badge = meta.stale ? "stale" : "fresh";
+  return `<div class="data-freshness-badge badge-${badge}">
+    <span>Updated ${escapeHtml(ts)}</span>
+    ${meta.responseTimeMs ? `<span class="muted">${escapeHtml(String(meta.responseTimeMs))}ms</span>` : ""}
+    ${meta.cache ? `<span class="cache-tag">${escapeHtml(meta.cache)}</span>` : ""}
+  </div>`;
+}
+
+export function progressBarHtml(id = "pipeline-progress") {
+  return `<div id="${id}" class="progress-panel hidden">
+    <div class="progress-label"><span class="progress-step">Starting…</span><span class="progress-pct">0%</span></div>
+    <div class="progress-track"><div class="progress-fill" style="width:0%"></div></div>
+    <div class="progress-steps">${["A","B","C","D","E","F","G","H","I","J"].map((s) =>
+      `<span class="step-dot" data-step="${s}">${s}</span>`
+    ).join("")}</div>
+  </div>`;
+}
+
+export function updateProgressBar(panelId, progress) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  if (!progress?.running) {
+    panel.classList.add("hidden");
+    return;
+  }
+  panel.classList.remove("hidden");
+  const pct = Math.round(progress.overall_progress_pct || 0);
+  panel.querySelector(".progress-fill").style.width = `${pct}%`;
+  panel.querySelector(".progress-pct").textContent = `${pct}%`;
+  panel.querySelector(".progress-step").textContent =
+    progress.message || progress.current_step || "Running…";
+  const idx = progress.step_index ?? 0;
+  panel.querySelectorAll(".step-dot").forEach((el, i) => {
+    el.classList.toggle("active", i === idx);
+    el.classList.toggle("done", i < idx);
+  });
+}
+
+export function freshnessBarHtml(data, pageMeta = {}) {
+  const parts = [];
+  if (pageMeta.lastUpdated) {
+    parts.push(dataFreshnessBadge(pageMeta.lastUpdated, pageMeta));
+  }
+  if (data?.warnings?.length) {
+    const w = data.warnings[0];
+    parts.push(`<div class="freshness-warn">⚠ ${escapeHtml(w.entity || "Data")}: ${Math.round(w.completeness_pct || 0)}% complete — some features use fallback priors.</div>`);
+  }
+  return parts.join("");
 }
 
 export function timelineHtml(events) {
