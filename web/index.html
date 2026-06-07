@@ -8,17 +8,29 @@
       name="description"
       content="FIFA World Cup 2026 research predictions. Educational use only."
     />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
+    <div class="page-bg" aria-hidden="true"></div>
     <div id="app">
       <header class="header">
         <div class="header-top">
-          <div>
-            <p class="eyebrow">Research only · Not betting advice</p>
-            <h1>WC 2026 Predictor</h1>
+          <div class="brand">
+            <div class="brand-icon" aria-hidden="true">⚽</div>
+            <div>
+              <p class="eyebrow">Research only · Not betting advice</p>
+              <h1>WC 2026 Predictor</h1>
+            </div>
           </div>
-          <button id="btn-refresh" class="btn-refresh" type="button">Refresh data</button>
+          <button id="btn-refresh" class="btn-primary" type="button">
+            <span class="btn-icon">↻</span> Refresh data
+          </button>
         </div>
         <nav class="tabs" aria-label="Sections">
           <button class="tab active" data-tab="matches" type="button">Matches</button>
@@ -30,7 +42,7 @@
       <main id="main">
         <div id="loading" class="loading hidden">
           <div class="spinner"></div>
-          <p>Loading…</p>
+          <p>Loading matches…</p>
         </div>
         <div id="error" class="error-box hidden"></div>
         <div id="content"></div>

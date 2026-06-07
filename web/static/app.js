@@ -42,22 +42,35 @@ function isLive(status) {
   return LIVE_STATUSES.has(status);
 }
 
-function disclaimerHtml() {
-  return `<div class="disclaimer">
-    This app is for educational and research purposes only. Predictions are probabilistic estimates,
-    not guarantees. Not betting or financial advice. Not affiliated with FIFA.
+function disclaimerHtml(compact = false) {
+  return `<div class="disclaimer${compact ? " compact" : ""}">
+    <strong>Research only.</strong> Predictions are estimates, not guarantees.
+    Not betting advice. Not affiliated with FIFA.
   </div>`;
+}
+
+function teamInitials(name) {
+  const words = (name || "?").trim().split(/\s+/);
+  if (words.length >= 2) return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+  return (name || "?").slice(0, 2).toUpperCase();
 }
 
 function outcomeBar(pred) {
   if (!pred) return "";
-  const h = (pred.home_win_prob * 100).toFixed(1);
-  const d = (pred.draw_prob * 100).toFixed(1);
-  const a = (pred.away_win_prob * 100).toFixed(1);
-  return `<div class="outcome-bar" title="Home ${h}% · Draw ${d}% · Away ${a}%">
-    <span class="bar-home" style="width:${h}%"></span>
-    <span class="bar-draw" style="width:${d}%"></span>
-    <span class="bar-away" style="width:${a}%"></span>
+  const h = (pred.home_win_prob * 100).toFixed(0);
+  const d = (pred.draw_prob * 100).toFixed(0);
+  const a = (pred.away_win_prob * 100).toFixed(0);
+  return `<div class="outcome-wrap">
+    <div class="outcome-bar" title="Home ${h}% · Draw ${d}% · Away ${a}%">
+      <span class="bar-home" style="width:${h}%"></span>
+      <span class="bar-draw" style="width:${d}%"></span>
+      <span class="bar-away" style="width:${a}%"></span>
+    </div>
+    <div class="outcome-legend">
+      <span class="home">Home ${h}%</span>
+      <span class="draw">Draw ${d}%</span>
+      <span class="away">Away ${a}%</span>
+    </div>
   </div>`;
 }
 
@@ -74,13 +87,13 @@ function matchCardHtml(match, { clickable = true } = {}) {
     : `${pickHome}–${pickAway}`;
 
   const tag = live
-    ? `<span class="badge-live">● LIVE</span>`
-    : `<span class="badge-upcoming">UPCOMING</span>`;
+    ? `<span class="badge badge-live">● LIVE</span>`
+    : `<span class="badge badge-upcoming">UPCOMING</span>`;
 
   const exactScore =
     !hasScore && top && (top.home !== pickHome || top.away !== pickAway)
       ? `<div class="conf">Exact ${top.home}–${top.away}: ${(top.probability * 100).toFixed(0)}%</div>`
-      : !hasScore && pickPct > 0
+      : !hasScore && pickPct > 0 && top?.home === pickHome && top?.away === pickAway
         ? `<div class="conf">${(pickPct * 100).toFixed(0)}% likely</div>`
         : "";
 
@@ -91,13 +104,19 @@ function matchCardHtml(match, { clickable = true } = {}) {
   return `<article ${attrs}>
     <div class="card-meta">${tag}<span class="card-date">${formatDate(match.date)}</span></div>
     <div class="match-row">
-      <div class="team home">${escapeHtml(match.home_team)}</div>
+      <div class="team-col home">
+        <div class="team-badge">${teamInitials(match.home_team)}</div>
+        <div class="team">${escapeHtml(match.home_team)}</div>
+      </div>
       <div class="score-block">
         <div class="score">${center}</div>
-        <div class="pick-label">${hasScore ? "Score" : "Pick"}</div>
+        <div class="pick-label">${hasScore ? "FINAL" : "PICK"}</div>
         ${exactScore}
       </div>
-      <div class="team away">${escapeHtml(match.away_team)}</div>
+      <div class="team-col away">
+        <div class="team-badge">${teamInitials(match.away_team)}</div>
+        <div class="team">${escapeHtml(match.away_team)}</div>
+      </div>
     </div>
     ${outcomeBar(pred)}
   </article>`;
@@ -234,7 +253,7 @@ async function openMatch(id) {
         )
         .join("")}</ul></div>`;
     }
-    modalBody.innerHTML = disclaimerHtml() + matchCardHtml(match, { clickable: false }) + extra;
+    modalBody.innerHTML = disclaimerHtml(true) + matchCardHtml(match, { clickable: false }) + extra;
   } catch (e) {
     modalBody.innerHTML = `<p class="empty">${escapeHtml(e.message)}</p>`;
   }
