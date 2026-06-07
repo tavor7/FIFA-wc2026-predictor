@@ -50,6 +50,20 @@ from src.team_flags import slugify
 from src.team_profiles import normalize_team_name, prior_metadata
 
 AUTHOR = "Amit Tavor"
+
+
+def _squad_player_payload(player: dict[str, Any], injured_names: set[str]) -> dict[str, Any]:
+    """Serialize a squad row with injury flag and consistent rating scale."""
+    d = row_to_dict(player) if not isinstance(player, dict) else dict(player)
+    name = (d.get("name") or "").strip()
+    d["injured"] = name.lower() in injured_names
+    rating = d.get("rating")
+    pid = d.get("api_player_id")
+    if rating is not None and pid is not None and int(pid) < ext.FC26_ID_OFFSET and float(rating) <= 15:
+        d["rating_scale"] = "api_match"
+    else:
+        d["rating_scale"] = "fc26"
+    return d
 DISCLAIMER = (
     "For educational and research purposes only. Not betting or financial advice. "
     "Not affiliated with FIFA. Use at your own discretion."
@@ -146,15 +160,13 @@ def recent_matches(limit: int = 40) -> list[dict[str, Any]]:
 
 @router.get("/teams")
 def list_teams() -> list[dict[str, Any]]:
-    teams = ext.get_all_teams()
+    teams = ext.get_tournament_teams()
     if not teams:
-        seen: set[str] = set()
-        for m in db.get_upcoming_matches(limit=200):
-            for t in (m["home_team"], m["away_team"]):
-                if t not in seen:
-                    seen.add(t)
-                    ext.upsert_team(t, slug=slugify(t), country_code=team_meta(t)["country_code"])
-        teams = ext.get_all_teams()
+        from src.tournament_teams import get_wc2026_team_names
+
+        for t in get_wc2026_team_names():
+            ext.upsert_team(t, slug=slugify(t), country_code=team_meta(t)["country_code"])
+        teams = ext.get_tournament_teams()
     out = []
     for t in teams:
         d = row_to_dict(t)
@@ -182,8 +194,10 @@ def team_detail(slug: str) -> dict[str, Any]:
     name = team["name"]
     form = TeamFormAnalyzer().compute(name, datetime.utcnow().isoformat())
     momentum = MomentumEngine().compute(name, datetime.utcnow().isoformat()).to_dict()
-    players = ext.get_players_by_team_id(int(team["id"])) if team.get("id") else []
     injuries = db.get_injuries_for_teams([name])
+    injured_names = {(i["player_name"] or "").lower() for i in injuries}
+    squad = ext.get_squad_players(int(team["id"])) if team.get("id") else []
+    players = [_squad_player_payload(p, injured_names) for p in squad]
 
     return {
         "team": row_to_dict(team),
@@ -191,7 +205,8 @@ def team_detail(slug: str) -> dict[str, Any]:
         "form": form.to_dict(),
         "momentum": momentum,
         "strength": prior_metadata(name),
-        "players": [row_to_dict(p) for p in players],
+        "players": players,
+        "squad_source": "fc26" if ext.count_fc26_players_for_team(int(team["id"])) else "api",
         "injuries": [row_to_dict(i) for i in injuries],
         "history": row_to_dict(ext.get_team_history(name)) or {},
     }
@@ -364,9 +379,9 @@ def player_trends(player_id: int) -> dict[str, Any]:
 
 @router.get("/reports/summary")
 def reports_summary() -> dict[str, Any]:
-    teams = ext.get_all_teams()
+    teams = ext.get_tournament_teams()
     momentum_rank = []
-    for t in teams[:30]:
+    for t in teams:
         snap = MomentumEngine().compute(t["name"], datetime.utcnow().isoformat())
         momentum_rank.append({"team": t["name"], "momentum": snap.score, "details": snap.to_dict()})
     momentum_rank.sort(key=lambda x: x["momentum"], reverse=True)

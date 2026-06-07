@@ -54,7 +54,7 @@ def load_historical_seeds() -> dict[str, Any]:
         for row in rows:
             league = row.get("league") or path.stem.replace("_", " ")
             row["league"] = league
-            match_id = _upsert_seed_match(row, {})
+            match_id = _upsert_seed_match(row, {}, register_teams=False)
             if match_id:
                 weight = _weight_for_league(league)
                 with get_connection() as conn:

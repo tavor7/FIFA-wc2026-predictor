@@ -53,7 +53,7 @@ def _player_importance_multiplier(player_id: Optional[int], player_name: str, te
         row = dbx.get_player_by_api_id(int(player_id))
         if row and row["rating"]:
             return min(float(row["rating"]) / 80.0, 1.4)
-    team_row = dbx.get_team_by_name(normalize_team_name(team))
+    team_row = dbx.resolve_team(team)
     if team_row:
         for p in dbx.get_players_by_team_id(int(team_row["id"])):
             if p["name"] and p["name"].lower() == player_name.lower() and p["rating"]:
@@ -68,7 +68,7 @@ def _lookup_player_position(
         row = dbx.get_player_by_api_id(int(player_id))
         if row and row.get("position"):
             return row["position"]
-    team_row = dbx.get_team_by_name(normalize_team_name(team))
+    team_row = dbx.resolve_team(team)
     if team_row:
         for p in dbx.get_players_by_team_id(int(team_row["id"])):
             if p["name"] and p["name"].lower() == player_name.lower():

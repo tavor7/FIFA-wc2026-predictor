@@ -36,6 +36,12 @@ def _startup_seed_worker() -> None:
     """Run after the server is listening — avoids Render deploy port-timeout."""
     try:
         ensure_baseline_data(min_matches=10, run_predictions=False)
+        from src import db_extended as ext
+        from src.services.data_sync_service import DataSyncService
+
+        ext.prune_non_tournament_teams()
+        if ext.count_fc26_players() < 400:
+            DataSyncService().ensure_fc26_squads()
         logger.info("Background startup seed finished")
     except Exception as exc:
         logger.warning("Startup seed failed: %s", exc)

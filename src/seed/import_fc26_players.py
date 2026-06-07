@@ -65,17 +65,19 @@ def _optional_float(val: Any) -> Optional[float]:
 
 
 def _wc_team_names() -> set[str]:
-    groups = _load_json("wc2026_groups.json").get("groups") or {}
-    teams: set[str] = set()
-    for members in groups.values():
-        teams.update(members)
-    return teams
+    from src.tournament_teams import get_wc2026_team_names
+
+    return set(get_wc2026_team_names())
 
 
-def ensure_fc26_csv(path: Path = FC26_CSV_PATH) -> Path:
-    """Download FC26 player CSV if not present locally."""
+def ensure_fc26_csv(path: Path = FC26_CSV_PATH, *, allow_download: bool = True) -> Path:
+    """Use bundled FC26 CSV; download only when missing and allowed."""
     if path.is_file() and path.stat().st_size > 1_000_000:
         return path
+    if not allow_download:
+        raise FileNotFoundError(
+            f"Bundled FC26 CSV missing at {path}. Commit data/seeds/fc26_players.csv to the repo."
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     logger.info("Downloading FC26 player data (~11MB)...")
     resp = requests.get(FC26_CSV_URL, timeout=120)
@@ -87,14 +89,13 @@ def ensure_fc26_csv(path: Path = FC26_CSV_PATH) -> Path:
 
 def _resolve_team_id(team_name: str) -> int:
     """Match existing WC team row (seed/API may use a different display name)."""
-    canonical = normalize_team_name(team_name)
-    slug = slugify(canonical)
-    existing = dbx.get_team_by_slug(slug) or dbx.get_team_by_name(canonical) or dbx.get_team_by_name(team_name)
+    existing = dbx.resolve_team(team_name)
     if existing:
         return int(existing["id"])
+    canonical = normalize_team_name(team_name)
     return dbx.upsert_team(
-        canonical,
-        slug=slug,
+        team_name,
+        slug=slugify(team_name),
         country_code=get_country_code(canonical),
     )
 
@@ -150,8 +151,8 @@ def import_fc26_players(
     """
     db.init_db()
     path = csv_path or FC26_CSV_PATH
-    if download and not path.is_file():
-        ensure_fc26_csv(path)
+    if not path.is_file():
+        ensure_fc26_csv(path, allow_download=download)
 
     if not path.is_file():
         raise FileNotFoundError(

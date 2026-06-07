@@ -58,12 +58,26 @@ class DataSyncService:
         _log_sync("sync_injuries", result)
         return result
 
+    def ensure_fc26_squads(self, min_players: int = 400) -> dict[str, Any]:
+        """Load EA FC 26 squad ratings from bundled CSV when missing."""
+        fc26_total = ext.count_fc26_players()
+        if fc26_total >= min_players:
+            return {"status": "skipped", "players": fc26_total}
+        from src.seed.import_fc26_players import FC26_CSV_PATH, import_fc26_players
+
+        logger.info("Importing FC26 squads (%s players in DB)", fc26_total)
+        result = import_fc26_players(download=not FC26_CSV_PATH.is_file())
+        result["status"] = "imported"
+        _log_sync("import_fc26_players", result, source="kaggle_fc26")
+        return result
+
     def sync_team_stats(self) -> dict[str, Any]:
+        fc26 = self.ensure_fc26_squads()
         result = sync_squads()
         ext.upsert_data_freshness("team_stats", 100.0, source="api-football")
         ext.upsert_data_freshness("player_stats", 90.0, source="api-football")
         _log_sync("sync_team_stats", result)
-        return result
+        return {"fc26": fc26, **result}
 
     def sync_live(self) -> dict[str, Any]:
         live = db.get_live_matches()

@@ -68,7 +68,12 @@ def _team_group_map(groups: dict[str, list[str]]) -> dict[str, str]:
     return out
 
 
-def _upsert_seed_match(row: dict[str, Any], team_groups: dict[str, str]) -> Optional[int]:
+def _upsert_seed_match(
+    row: dict[str, Any],
+    team_groups: dict[str, str],
+    *,
+    register_teams: bool = True,
+) -> Optional[int]:
     home = normalize_team_name(row["home_team"])
     away = normalize_team_name(row["away_team"])
     fixture = {
@@ -97,8 +102,12 @@ def _upsert_seed_match(row: dict[str, Any], team_groups: dict[str, str]) -> Opti
         round_name="Group Stage",
     )
 
-    for team_name, api_id in ((home, row.get("home_team_id")), (away, row.get("away_team_id"))):
-        _safe_upsert_team(team_name, api_id)
+    if register_teams:
+        from src.tournament_teams import is_wc2026_team
+
+        for team_name, api_id in ((home, row.get("home_team_id")), (away, row.get("away_team_id"))):
+            if is_wc2026_team(team_name):
+                _safe_upsert_team(team_name, api_id)
     return match_id
 
 
@@ -148,7 +157,7 @@ def load_fixture_seeds(season: Optional[int] = None) -> dict[str, Any]:
         if _upsert_seed_match(row, team_groups):
             synced_2026 += 1
     for row in wc2022:
-        if _upsert_seed_match(row, {}):
+        if _upsert_seed_match(row, {}, register_teams=False):
             synced_2022 += 1
 
     return {

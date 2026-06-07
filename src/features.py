@@ -167,10 +167,10 @@ def _fc26_expected_xi_strength(team: str) -> tuple[float, str]:
     """Top-11 FC26 ratings as proxy lineup (low reliability)."""
     from src import db_extended as dbx
 
-    team_row = dbx.get_team_by_name(team)
+    team_row = dbx.resolve_team(team)
     if not team_row:
         return 0.55, "heuristic_default"
-    players = dbx.get_players_by_team_id(int(team_row["id"]))
+    players = dbx.get_squad_players(int(team_row["id"]))
     if not players:
         return 0.55, "heuristic_default"
     top = sorted(players, key=lambda p: (p["rating"] or 0), reverse=True)[:11]

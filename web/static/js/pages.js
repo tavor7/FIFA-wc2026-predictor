@@ -104,6 +104,12 @@ export async function pageTeam(slug) {
     ${venueCard}
   </div>`);
 
+  const formatOvr = (p) => {
+    if (p.rating == null) return "—";
+    if (p.rating_scale === "api_match") return (p.rating * 10).toFixed(0);
+    return Math.round(p.rating);
+  };
+
   const squadRows = players
     .sort((a, b) => (b.rating || 0) - (a.rating || 0))
     .map(
@@ -111,7 +117,7 @@ export async function pageTeam(slug) {
         <td>${escapeHtml(p.name || "?")}</td>
         <td>${escapeHtml(p.positions_detail || p.position || "—")}</td>
         <td>${p.age ?? "—"}</td>
-        <td>${p.rating != null ? Math.round(p.rating) : "—"}</td>
+        <td>${formatOvr(p)}</td>
         <td>${p.potential != null ? Math.round(p.potential) : "—"}</td>
         <td>${escapeHtml(p.preferred_foot || "—")}</td>
         <td title="PAC ${p.stat_pace ?? "—"} · SHO ${p.stat_shooting ?? "—"} · PAS ${p.stat_passing ?? "—"} · DRI ${p.stat_dribbling ?? "—"} · DEF ${p.stat_defending ?? "—"} · PHY ${p.stat_physical ?? "—"}">${escapeHtml(p.club || "—")}</td>
@@ -119,11 +125,15 @@ export async function pageTeam(slug) {
       </tr>`
     );
 
+  const squadNote =
+    data.squad_source === "fc26"
+      ? `<p class="section-note">Squad ratings from EA FC 26. Thin squads may include extra players from the live API.</p>`
+      : "";
   const squadSection = section(
     "Squad",
     players.length
-      ? tableHtml(["Player", "Pos", "Age", "OVR", "POT", "Foot", "Club", "Status"], squadRows)
-      : `<p class="empty">Squad data not synced yet.</p>`
+      ? squadNote + tableHtml(["Player", "Pos", "Age", "OVR", "POT", "Foot", "Club", "Status"], squadRows)
+      : `<p class="empty">Squad data not loaded yet — run the full pipeline from Monitor.</p>`
   );
 
   const injSection = injuries.length

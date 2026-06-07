@@ -106,8 +106,45 @@ def get_team_by_slug(slug: str) -> Optional[Row]:
 
 
 def get_team_by_name(name: str) -> Optional[Row]:
+    return resolve_team(name)
+
+
+def resolve_team(name: str) -> Optional[Row]:
+    """Find a team by display name, alias, or URL slug."""
+    name = (name or "").strip()
+    if not name:
+        return None
+
     with get_connection() as conn:
-        return _execute(conn, "SELECT * FROM teams WHERE name = ?", (name,)).fetchone()
+        row = _execute(conn, "SELECT * FROM teams WHERE name = ?", (name,)).fetchone()
+        if row:
+            return row
+
+        from src.team_flags import slugify
+        from src.team_names import TEAM_ALIASES, normalize_team_name
+
+        row = _execute(conn, "SELECT * FROM teams WHERE slug = ?", (slugify(name),)).fetchone()
+        if row:
+            return row
+
+        canon = normalize_team_name(name)
+        if canon != name:
+            row = _execute(conn, "SELECT * FROM teams WHERE name = ?", (canon,)).fetchone()
+            if row:
+                return row
+            row = _execute(conn, "SELECT * FROM teams WHERE slug = ?", (slugify(canon),)).fetchone()
+            if row:
+                return row
+
+        for alias, canonical in TEAM_ALIASES.items():
+            if name in {alias, canonical} or canon in {alias, canonical}:
+                row = _execute(conn, "SELECT * FROM teams WHERE name = ?", (alias,)).fetchone()
+                if row:
+                    return row
+                row = _execute(conn, "SELECT * FROM teams WHERE name = ?", (canonical,)).fetchone()
+                if row:
+                    return row
+    return None
 
 
 def get_team_by_api_id(api_team_id: int) -> Optional[Row]:
@@ -122,9 +159,92 @@ def get_all_teams() -> list[Row]:
         return _execute(conn, "SELECT * FROM teams ORDER BY name").fetchall()
 
 
+def get_tournament_teams() -> list[Row]:
+    """The 48 WC 2026 nations (excludes historical-only teams from past tournaments)."""
+    from src.tournament_teams import filter_tournament_team_rows
+
+    return filter_tournament_team_rows(get_all_teams())
+
+
+def prune_non_tournament_teams() -> int:
+    """Remove team rows (and their players) that are not in the WC 2026 draw."""
+    from src.tournament_teams import filter_tournament_team_rows
+
+    keep = {int(t["id"]) for t in filter_tournament_team_rows(get_all_teams())}
+    if not keep:
+        return 0
+    placeholders = ", ".join("?" * len(keep))
+    params = tuple(keep)
+    with get_connection() as conn:
+        row = _execute(
+            conn,
+            f"SELECT COUNT(*) AS c FROM teams WHERE id NOT IN ({placeholders})",
+            params,
+        ).fetchone()
+        removed = int(dict(row)["c"])
+        if removed:
+            _execute(conn, f"DELETE FROM players WHERE team_id NOT IN ({placeholders})", params)
+            _execute(conn, f"DELETE FROM teams WHERE id NOT IN ({placeholders})", params)
+    return removed
+
+
 # ---------------------------------------------------------------------------
 # Players
 # ---------------------------------------------------------------------------
+
+FC26_ID_OFFSET = 260_000_000
+
+
+def count_fc26_players() -> int:
+    with get_connection() as conn:
+        if not _table_exists(conn, "players"):
+            return 0
+        row = _execute(
+            conn,
+            "SELECT COUNT(*) AS c FROM players WHERE api_player_id >= ?",
+            (FC26_ID_OFFSET,),
+        ).fetchone()
+        return int(dict(row)["c"])
+
+
+def count_fc26_players_for_team(team_id: int) -> int:
+    with get_connection() as conn:
+        row = _execute(
+            conn,
+            "SELECT COUNT(*) AS c FROM players WHERE team_id = ? AND api_player_id >= ?",
+            (team_id, FC26_ID_OFFSET),
+        ).fetchone()
+        return int(dict(row)["c"])
+
+
+def get_squad_players(team_id: int, *, max_size: int = 26) -> list[Row]:
+    """
+    Squad roster for UI: prefer EA FC 26 ratings; fill thin squads from API data.
+    Excludes sparse API-only duplicates when a full FC26 roster exists.
+    """
+    all_players = get_players_by_team_id(team_id)
+    fc26 = [
+        p for p in all_players
+        if p["api_player_id"] is not None and int(p["api_player_id"]) >= FC26_ID_OFFSET
+    ]
+    if not fc26:
+        return all_players[:max_size]
+
+    squad = list(fc26)
+    if len(squad) >= max_size:
+        return squad[:max_size]
+
+    fc26_names = {(p["name"] or "").lower() for p in fc26}
+    for p in all_players:
+        pid = p["api_player_id"]
+        if pid is not None and int(pid) < FC26_ID_OFFSET:
+            key = (p["name"] or "").lower()
+            if key and key not in fc26_names:
+                squad.append(p)
+                fc26_names.add(key)
+        if len(squad) >= max_size:
+            break
+    return squad[:max_size]
 
 
 def upsert_player(
@@ -1276,11 +1396,11 @@ def get_squad_rating_leaders(limit: int = 20) -> list[dict[str, Any]]:
                    p.rating, p.position, p.club
             FROM players p
             LEFT JOIN teams t ON t.id = p.team_id
-            WHERE p.rating IS NOT NULL
+            WHERE p.rating IS NOT NULL AND p.api_player_id >= ?
             ORDER BY p.rating DESC, p.name
             LIMIT ?
             """,
-            (limit,),
+            (FC26_ID_OFFSET, limit),
         ).fetchall()
     return [dict(r) for r in rows]
 

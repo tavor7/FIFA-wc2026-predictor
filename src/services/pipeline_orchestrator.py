@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Callable, Iterator, Optional
 
 from src import db
+from src import db_extended as ext
 from src import db_pipeline as pipe_db
 from src.db_pipeline import STEP_LABELS
 from src.services.data_sync_service import DataSyncService
@@ -90,6 +91,11 @@ class PipelineOrchestrator:
                 t.join(timeout=1)
 
         try:
+            if 0 in step_indices:
+                removed = ext.prune_non_tournament_teams()
+                if removed:
+                    logger.info("Pruned %d non-tournament teams", removed)
+
             if 0 in step_indices:
                 with heartbeat(0, "A", STEP_LABELS["A"]):
                     r = self.sync.sync_fixtures()

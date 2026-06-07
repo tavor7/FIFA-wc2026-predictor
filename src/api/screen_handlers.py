@@ -199,7 +199,7 @@ def get_teams_screen(page: int = 1, page_size: int = 48) -> dict[str, Any]:
     from src import db_extended as ext2
     from src.api.helpers import team_meta as tm
     teams = []
-    for t in ext2.get_all_teams():
+    for t in ext2.get_tournament_teams():
         d = dict(t)
         d["flag_url"] = tm(d["name"])["flag_url"]
         teams.append(d)

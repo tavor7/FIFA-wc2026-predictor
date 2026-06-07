@@ -117,7 +117,7 @@ class UICacheService:
         from src.analytics.momentum import MomentumEngine
         from src.analytics.team_form import TeamFormAnalyzer
 
-        teams = ext.get_all_teams()
+        teams = ext.get_tournament_teams()
         form_analyzer = TeamFormAnalyzer()
         momentum_engine = MomentumEngine()
         now = datetime.utcnow().isoformat()
@@ -131,7 +131,7 @@ class UICacheService:
             mom = momentum_engine.compute(name, now)
             group = self._team_group(name)
             meta = team_meta(name)
-            players = ext.get_players_by_team_id(int(d["id"])) if d.get("id") else []
+            players = ext.get_squad_players(int(d["id"])) if d.get("id") else []
             ratings = [p["rating"] for p in players if dict(p).get("rating")]
             avg_rating = sum(ratings) / len(ratings) if ratings else None
 
