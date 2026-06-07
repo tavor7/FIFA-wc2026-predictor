@@ -15,10 +15,15 @@ Native mobile app for the WC 2026 predictor. Connects to the FastAPI backend on 
 ```bash
 cd mobile
 npm install
-cp .env.example .env
 ```
 
-Edit `.env` with your Render API URL:
+Copy the root env template (one `.env` for backend + mobile):
+
+```bash
+cp ../.env.example ../.env
+```
+
+Edit **`../.env`** (project root) — at minimum set:
 
 ```env
 EXPO_PUBLIC_API_URL=https://your-api.onrender.com
@@ -59,4 +64,4 @@ Requires [Expo Application Services](https://expo.dev/eas) account.
 uvicorn api_server:app --reload --port 8000
 ```
 
-Then set `EXPO_PUBLIC_API_URL=http://YOUR_MAC_IP:8000` in `.env` for device testing on same network, or use Render URL for remote.
+Then set `EXPO_PUBLIC_API_URL=http://YOUR_MAC_IP:8000` in the **project root** `.env` for device testing on same network, or use Render URL for remote.

@@ -106,7 +106,7 @@ cd mobile && npm start
 
 | Problem | Fix |
 |---------|-----|
-| App can't connect | Check `EXPO_PUBLIC_API_URL` in `mobile/.env` |
+| App can't connect | Check `EXPO_PUBLIC_API_URL` in the project root `.env` |
 | API 502 / slow | Render free tier cold start — wait 60s |
 | Empty matches | Open API `/bootstrap` or pull to refresh in app |
 | Streamlit still running | Render now uses FastAPI; redeploy from latest `render.yaml` |

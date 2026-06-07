@@ -61,7 +61,7 @@ The mobile app lives in `mobile/` and uses **Expo** for a native feel on iOS/And
 ```bash
 cd mobile
 npm install
-cp .env.example .env   # set EXPO_PUBLIC_API_URL to your Render API URL
+cp ../.env.example ../.env   # one env file at project root (backend + mobile)
 npm start
 ```
 
