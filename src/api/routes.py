@@ -16,6 +16,7 @@ from src.analytics.team_form import TeamFormAnalyzer
 from src.api.helpers import match_with_prediction, row_to_dict, team_meta
 from src.db import db_backend
 from src.predict import generate_predictions, retrain_and_predict
+from src.analytics.computed_strength import recompute_and_persist
 from src.sync_historical import sync_historical_seasons
 from src.sync_injuries import sync_injuries
 from src.sync_live_data import sync_live_data
@@ -28,7 +29,7 @@ from src.sync.sync_squads import sync_squads
 from src.sync.sync_standings import sync_standings
 from src.sync.sync_weather import sync_weather
 from src.team_flags import slugify
-from src.team_profiles import normalize_team_name
+from src.team_profiles import normalize_team_name, prior_metadata
 
 AUTHOR = "Amit Tavor"
 DISCLAIMER = (
@@ -42,6 +43,8 @@ router = APIRouter()
 def _run_full_sync() -> None:
     if len(db.get_all_finished_matches()) < 10:
         sync_historical_seasons()
+    else:
+        recompute_and_persist()
     sync_all_matches(days_ahead=120, days_back=30)
     sync_standings()
     sync_bracket()
@@ -66,7 +69,7 @@ def meta() -> dict[str, Any]:
 @router.get("/meta/freshness")
 def freshness() -> dict[str, Any]:
     rows = ext.get_all_data_freshness()
-    warnings = [r for r in rows if float(r.get("completeness_pct") or 100) < 70]
+    warnings = [row_to_dict(r) for r in rows if float(dict(r).get("completeness_pct") or 100) < 70]
     latest_sync = ext.get_recent_sync_logs(limit=5)
     return {
         "entities": [row_to_dict(r) for r in rows],
@@ -132,6 +135,7 @@ def team_detail(slug: str) -> dict[str, Any]:
         "flag_url": team_meta(name)["flag_url"],
         "form": form.to_dict(),
         "momentum": momentum,
+        "strength": prior_metadata(name),
         "players": [row_to_dict(p) for p in players],
         "injuries": [row_to_dict(i) for i in injuries],
         "history": row_to_dict(ext.get_team_history(name)) or {},
@@ -209,10 +213,11 @@ def match_detail(match_id: int) -> dict[str, Any]:
     m["weather"] = row_to_dict(ext.get_weather_forecast(match_id))
     fs = db.get_feature_store(match_id)
     if fs:
+        fs_d = row_to_dict(fs)
         m["features"] = {
-            "features": json.loads(fs["features_json"] or "{}"),
-            "missing_flags": json.loads(fs.get("missing_flags_json") or "{}"),
-            "metadata": json.loads(fs.get("metadata_json") or "{}"),
+            "features": json.loads(fs_d.get("features_json") or "{}"),
+            "missing_flags": json.loads(fs_d.get("missing_flags_json") or "{}"),
+            "metadata": json.loads(fs_d.get("metadata_json") or "{}"),
         }
     return m
 
@@ -220,7 +225,7 @@ def match_detail(match_id: int) -> dict[str, Any]:
 @router.get("/matches/{match_id}/timeline")
 def match_timeline(match_id: int) -> list[dict[str, Any]]:
     events = ext.get_match_events(match_id)
-    return [row_to_dict(e) for e in sorted(events, key=lambda x: x.get("minute") or 0)]
+    return [row_to_dict(e) for e in sorted(events, key=lambda x: dict(x).get("minute") or 0)]
 
 
 @router.get("/matches/{match_id}/full")
@@ -244,8 +249,9 @@ def tournament_overview() -> dict[str, Any]:
     standings = ext.get_all_standings(SEASON)
     groups: dict[str, list] = {}
     for s in standings:
-        g = s.get("group_name") or "Unknown"
-        groups.setdefault(g, []).append(row_to_dict(s))
+        sd = row_to_dict(s)
+        g = sd.get("group_name") or "Unknown"
+        groups.setdefault(g, []).append(sd)
     return {
         "standings": groups,
         "upcoming": [match_with_prediction(m) for m in db.get_upcoming_matches(limit=50)],
@@ -315,6 +321,12 @@ def monitor_status() -> dict[str, Any]:
         },
         "models": {"ensemble": True, "elo": True, "xgboost_optional": True},
     }
+
+
+@router.post("/sync/historical")
+def sync_historical() -> dict[str, Any]:
+    """Sync 2018+2022 WC results and recompute data-driven team strength."""
+    return sync_historical_seasons()
 
 
 @router.post("/sync/matches")

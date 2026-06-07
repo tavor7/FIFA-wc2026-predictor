@@ -15,7 +15,9 @@ from src.analytics.team_form import TeamFormAnalyzer
 from src.models.elo import EloModel
 from src.team_profiles import (
     get_team_prior,
+    get_team_prior_detail,
     normalize_team_name,
+    prior_metadata,
     prior_to_goal_rates,
 )
 
@@ -310,6 +312,8 @@ def build_features_for_match(match_row: Any) -> MatchFeatures:
         "momentum_away_detail": mom_away.to_dict(),
         "team_form_home": home_form_snap.to_dict(),
         "team_form_away": away_form_snap.to_dict(),
+        "strength_home": prior_metadata(home),
+        "strength_away": prior_metadata(away),
     }
     return mf
 

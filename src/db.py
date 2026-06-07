@@ -170,6 +170,13 @@ CREATE TABLE IF NOT EXISTS teams (
     country_code TEXT,
     api_team_id INTEGER UNIQUE,
     logo_url TEXT,
+    attack_strength REAL,
+    defense_strength REAL,
+    strength_matches INTEGER,
+    strength_avg_scored REAL,
+    strength_avg_conceded REAL,
+    strength_source TEXT,
+    strength_updated_at TEXT,
     last_updated TEXT
 );
 
@@ -446,6 +453,21 @@ def _migrate_extended_schema(conn: Any) -> None:
     for col, col_type in pred_cols.items():
         if col not in existing:
             conn.execute(f"ALTER TABLE predictions ADD COLUMN {col} {col_type}")
+
+    if _table_exists(conn, "teams"):
+        team_cols = {
+            "attack_strength": "REAL",
+            "defense_strength": "REAL",
+            "strength_matches": "INTEGER",
+            "strength_avg_scored": "REAL",
+            "strength_avg_conceded": "REAL",
+            "strength_source": "TEXT",
+            "strength_updated_at": "TEXT",
+        }
+        existing_teams = _table_columns(conn, "teams")
+        for col, col_type in team_cols.items():
+            if col not in existing_teams:
+                conn.execute(f"ALTER TABLE teams ADD COLUMN {col} {col_type}")
 
     if _table_exists(conn, "feature_store"):
         fs_cols = _table_columns(conn, "feature_store")

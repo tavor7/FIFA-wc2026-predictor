@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from src import config
-from src.db import Row, _execute, get_connection
+from src.db import Row, _execute, _table_exists, get_connection
 
 
 def _now() -> str:
@@ -51,6 +51,48 @@ def upsert_team(
         )
         row = _execute(conn, "SELECT id FROM teams WHERE name = ?", (name,)).fetchone()
         return int(row["id"])
+
+
+def update_team_strength(
+    name: str,
+    attack: float,
+    defense: float,
+    matches: int,
+    source: str,
+    avg_scored: float = 0.0,
+    avg_conceded: float = 0.0,
+) -> None:
+    now = _now()
+    with get_connection() as conn:
+        _execute(
+            conn,
+            """
+            UPDATE teams SET
+                attack_strength = ?,
+                defense_strength = ?,
+                strength_matches = ?,
+                strength_avg_scored = ?,
+                strength_avg_conceded = ?,
+                strength_source = ?,
+                strength_updated_at = ?
+            WHERE name = ?
+            """,
+            (attack, defense, matches, avg_scored, avg_conceded, source, now, name),
+        )
+
+
+def get_all_team_strengths() -> list[Row]:
+    with get_connection() as conn:
+        return _execute(
+            conn,
+            """
+            SELECT name, attack_strength, defense_strength, strength_matches,
+                   strength_avg_scored, strength_avg_conceded, strength_source
+            FROM teams
+            WHERE attack_strength IS NOT NULL
+            ORDER BY strength_matches DESC
+            """,
+        ).fetchall()
 
 
 def get_team_by_id(team_id: int) -> Optional[Row]:
@@ -1059,10 +1101,12 @@ def get_player_leaderboard(metric: str, limit: int = 20) -> list[dict[str, Any]]
     }
     col = col_map.get(metric, "goals")
     with get_connection() as conn:
+        if not _table_exists(conn, "player_match_stats"):
+            return []
         rows = _execute(
             conn,
             f"""
-            SELECT player_id, player_name, team,
+            SELECT api_player_id AS player_id, player_name, team,
                    SUM(COALESCE(goals, 0)) AS goals,
                    SUM(COALESCE(assists, 0)) AS assists,
                    AVG(rating) AS rating,
@@ -1070,7 +1114,7 @@ def get_player_leaderboard(metric: str, limit: int = 20) -> list[dict[str, Any]]
                    SUM(COALESCE(yellow_cards, 0)) AS yellow_cards,
                    SUM(COALESCE(red_cards, 0)) AS red_cards
             FROM player_match_stats
-            GROUP BY player_id, player_name, team
+            GROUP BY api_player_id, player_name, team
             ORDER BY {col} DESC
             LIMIT ?
             """,
@@ -1087,7 +1131,7 @@ def get_player_match_stats_history(player_id: int, limit: int = 20) -> list[Row]
             SELECT pms.*, m.date, m.home_team, m.away_team
             FROM player_match_stats pms
             JOIN matches m ON m.id = pms.match_id
-            WHERE pms.player_id = ?
+            WHERE pms.api_player_id = ?
             ORDER BY m.date DESC
             LIMIT ?
             """,

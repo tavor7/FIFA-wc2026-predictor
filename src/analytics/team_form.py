@@ -6,7 +6,7 @@ from dataclasses import dataclass, asdict
 from typing import Any, Optional
 
 from src import db
-from src.team_profiles import get_team_prior, normalize_team_name, prior_form
+from src.team_profiles import get_team_prior, get_team_prior_detail, normalize_team_name, prior_form
 
 
 @dataclass
@@ -83,23 +83,39 @@ class TeamFormAnalyzer:
         if all_time["matches"] >= 2:
             return self._from_all_time(team, all_time)
 
-        attack, defense = get_team_prior(team)
-        form = prior_form(attack, defense)
-        scored, conceded = all_time.get("scored", 1.2), all_time.get("conceded", 1.2)
+        rating = get_team_prior_detail(team)
+        if rating.matches > 0:
+            form = prior_form(rating.attack, rating.defense)
+            return TeamFormSnapshot(
+                team=team,
+                form_last_5=form,
+                form_last_10=form,
+                home_form=form,
+                away_form=form,
+                goals_scored_last_5=rating.avg_scored,
+                goals_conceded_last_5=rating.avg_conceded,
+                goals_scored_last_10=rating.avg_scored,
+                goals_conceded_last_10=rating.avg_conceded,
+                clean_sheets_last_5=0,
+                opponent_adjusted_form=form,
+                matches_used=rating.matches,
+                source="strength_ratings",
+            )
+
         return TeamFormSnapshot(
             team=team,
-            form_last_5=form,
-            form_last_10=form,
-            home_form=form,
-            away_form=form,
-            goals_scored_last_5=scored,
-            goals_conceded_last_5=conceded,
-            goals_scored_last_10=scored,
-            goals_conceded_last_10=conceded,
+            form_last_5=0.5,
+            form_last_10=0.5,
+            home_form=0.5,
+            away_form=0.5,
+            goals_scored_last_5=1.2,
+            goals_conceded_last_5=1.2,
+            goals_scored_last_10=1.2,
+            goals_conceded_last_10=1.2,
             clean_sheets_last_5=0,
-            opponent_adjusted_form=form,
+            opponent_adjusted_form=0.5,
             matches_used=0,
-            source="prior",
+            source="insufficient_data",
         )
 
     def _from_matches(

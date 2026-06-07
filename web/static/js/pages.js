@@ -51,6 +51,7 @@ export async function pageTeam(slug) {
         ${form.form_last_5 != null ? `<span class="metric-badge">L5 form ${(form.form_last_5 * 100).toFixed(0)}%</span>` : ""}
         ${form.opponent_adjusted_form != null ? `<span class="metric-badge">Adj form ${(form.opponent_adjusted_form * 100).toFixed(0)}%</span>` : ""}
         ${form.source ? `<span class="metric-badge">${escapeHtml(form.source)}</span>` : ""}
+        ${data.strength?.matches ? `<span class="metric-badge">${data.strength.matches} WC matches · atk ${data.strength.attack?.toFixed(2)}</span>` : ""}
       </div>
     </div>
   </div>`;

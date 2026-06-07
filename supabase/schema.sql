@@ -99,6 +99,13 @@ CREATE TABLE IF NOT EXISTS teams (
     country_code TEXT,
     api_team_id INTEGER UNIQUE,
     logo_url TEXT,
+    attack_strength REAL,
+    defense_strength REAL,
+    strength_matches INTEGER,
+    strength_avg_scored REAL,
+    strength_avg_conceded REAL,
+    strength_source TEXT,
+    strength_updated_at TEXT,
     last_updated TEXT
 );
 
