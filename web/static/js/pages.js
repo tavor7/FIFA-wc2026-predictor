@@ -246,10 +246,11 @@ export async function pagePlayers() {
   };
 
   return disclaimerHtml(true) +
-    `<h2 class="page-title">Player leaders</h2>` +
+    `<h2 class="page-title">Player leaders</h2>
+    <p class="page-intro">Squad ratings from <strong>EA FC 26</strong> (game data). Goals and assists fill in during the World Cup from live match sync.</p>` +
     renderBoard("Top scorers", data.top_scorers, "goals") +
     renderBoard("Top assists", data.top_assists, "assists") +
-    renderBoard("Top ratings", data.top_ratings, "rating");
+    renderBoard(data.ratings_source === "fc26" ? "Top squad ratings (FC26)" : "Top ratings", data.top_ratings, "rating");
 }
 
 export async function pageReports() {

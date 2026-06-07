@@ -7,6 +7,7 @@ __pycache__/
 .DS_Store
 data/football.db
 data/models/
+data/seeds/fc26_players.csv
 .streamlit/secrets.toml
 *.joblib
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from datetime import datetime
@@ -40,6 +41,7 @@ DISCLAIMER = (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _run_full_sync() -> None:
@@ -284,10 +286,18 @@ def tournament_bracket() -> list[dict[str, Any]]:
 
 @router.get("/players/leaders")
 def player_leaders() -> dict[str, Any]:
+    top_scorers = ext.get_player_leaderboard("goals", limit=20)
+    top_assists = ext.get_player_leaderboard("assists", limit=20)
+    top_ratings = ext.get_player_leaderboard("rating", limit=20)
+    ratings_source = "match_stats"
+    if not top_ratings:
+        top_ratings = ext.get_squad_rating_leaders(limit=20)
+        ratings_source = "fc26"
     return {
-        "top_scorers": ext.get_player_leaderboard("goals", limit=20),
-        "top_assists": ext.get_player_leaderboard("assists", limit=20),
-        "top_ratings": ext.get_player_leaderboard("rating", limit=20),
+        "top_scorers": top_scorers,
+        "top_assists": top_assists,
+        "top_ratings": top_ratings,
+        "ratings_source": ratings_source,
     }
 
 
@@ -344,7 +354,7 @@ def _data_feed_hints(keys: dict[str, Any], counts: dict[str, int]) -> list[str]:
     if not keys.get("any_configured"):
         hints.append("Set API_FOOTBALL_KEY and/or FOOTBALL_DATA_KEY in .env for live updates (players, events, injuries).")
     elif counts.get("players", 0) == 0:
-        hints.append("Run POST /sync/full after setting API keys to load squads, events, and injuries.")
+        hints.append("Run POST /seed/players to load EA FC 26 squad ratings (Kaggle dataset).")
     if counts.get("standings", 0) == 0:
         hints.append("Run POST /seed to populate group standings from the official draw.")
     return hints
@@ -390,6 +400,24 @@ def gen_predictions(bg: BackgroundTasks) -> dict[str, Any]:
 @router.post("/model/retrain")
 def retrain() -> dict[str, Any]:
     return retrain_and_predict()
+
+
+@router.post("/seed/players")
+def seed_players(bg: BackgroundTasks) -> dict[str, Any]:
+    """Import EA FC 26 player ratings for WC squads (Kaggle dataset)."""
+    from src.seed.import_fc26_players import import_fc26_players
+
+    def _job() -> None:
+        try:
+            import_fc26_players(download=True)
+        except Exception as exc:
+            logger.exception("FC26 player import failed: %s", exc)
+
+    bg.add_task(_job)
+    return {
+        "status": "started",
+        "message": "Importing FC26 player squads in background (~1–2 min).",
+    }
 
 
 @router.post("/seed")

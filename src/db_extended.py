@@ -1123,6 +1123,27 @@ def get_player_leaderboard(metric: str, limit: int = 20) -> list[dict[str, Any]]
     return [dict(r) for r in rows]
 
 
+def get_squad_rating_leaders(limit: int = 20) -> list[dict[str, Any]]:
+    """Top player overall ratings from imported squads (e.g. FC26)."""
+    with get_connection() as conn:
+        if not _table_exists(conn, "players"):
+            return []
+        rows = _execute(
+            conn,
+            """
+            SELECT p.id AS player_id, p.name AS player_name, t.name AS team,
+                   p.rating, p.position, p.club
+            FROM players p
+            LEFT JOIN teams t ON t.id = p.team_id
+            WHERE p.rating IS NOT NULL
+            ORDER BY p.rating DESC, p.name
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_player_match_stats_history(player_id: int, limit: int = 20) -> list[Row]:
     with get_connection() as conn:
         return _execute(
