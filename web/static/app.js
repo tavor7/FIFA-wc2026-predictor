@@ -10,8 +10,13 @@ const loading = document.querySelector("#loading");
 const errorBox = document.querySelector("#error");
 const freshnessBar = document.querySelector("#freshness-bar");
 const nav = document.querySelector("#main-nav");
+const adminModal = document.querySelector("#admin-modal");
+const adminForm = document.querySelector("#admin-form");
+const adminPasswordInput = document.querySelector("#admin-password");
+const adminModalError = document.querySelector("#admin-modal-error");
 
 let activeRoute = "matches";
+let pageMeta = {};
 
 const ROUTES = [
   { pattern: /^\/team\/([^/]+)$/, name: "team", handler: ([, slug]) => pageTeam(slug) },
@@ -43,10 +48,6 @@ function setActiveNav(name) {
   });
 }
 
-function showLoading(show) {
-  loading?.classList.toggle("hidden", !show);
-}
-
 function showError(msg) {
   if (!msg) {
     errorBox?.classList.add("hidden");
@@ -59,7 +60,17 @@ function showError(msg) {
   }
 }
 
-let pageMeta = {};
+function showAdminModalError(msg) {
+  if (!adminModalError) return;
+  if (!msg) {
+    adminModalError.textContent = "";
+    adminModalError.classList.add("hidden");
+    return;
+  }
+  adminModalError.textContent = msg;
+  adminModalError.classList.remove("hidden");
+}
+
 
 async function updateFreshnessBar() {
   const data = await loadFreshness();
@@ -68,6 +79,7 @@ async function updateFreshnessBar() {
     ...pageMeta,
     responseTimeMs: lastResponseMeta.responseTimeMs,
     cache: lastResponseMeta.cache,
+    showTimestamp: activeRoute !== "monitor",
   });
   if (html) {
     freshnessBar.innerHTML = html;
@@ -83,7 +95,7 @@ async function navigate() {
   activeRoute = name;
   setActiveNav(name === "team" || name === "match" ? "matches" : name);
   showError(null);
-  showLoading(false);
+  loading?.classList.add("hidden");
   content.innerHTML = skeletonCardsHtml(name === "monitor" ? 2 : 4);
   try {
     const html = await handler(match);
@@ -92,21 +104,55 @@ async function navigate() {
   } catch (e) {
     showError(e.message || "Failed to load page");
     content.innerHTML = "";
-    showLoading(false);
   }
 }
 
 async function ensureAdminAuth() {
   if (getAdminToken()) return true;
-  const password = window.prompt("Admin password required:");
-  if (!password) return false;
-  try {
-    await adminLogin(password);
-    return true;
-  } catch {
-    showError("Invalid admin password");
-    return false;
-  }
+  if (!adminModal || !adminForm) return false;
+
+  showAdminModalError(null);
+  if (adminPasswordInput) adminPasswordInput.value = "";
+  adminModal.showModal();
+  requestAnimationFrame(() => adminPasswordInput?.focus());
+
+  return new Promise((resolve) => {
+    const onCancel = () => {
+      adminModal.close();
+      cleanup();
+      resolve(false);
+    };
+
+    const onSubmit = async (e) => {
+      e.preventDefault();
+      const password = adminPasswordInput?.value?.trim();
+      if (!password) return;
+      try {
+        await adminLogin(password);
+        adminModal.close();
+        cleanup();
+        resolve(true);
+      } catch {
+        showAdminModalError("Invalid password. Try again.");
+        if (adminPasswordInput) {
+          adminPasswordInput.value = "";
+          adminPasswordInput.focus();
+        }
+      }
+    };
+
+    const cleanup = () => {
+      adminForm.removeEventListener("submit", onSubmit);
+      adminModal.removeEventListener("cancel", onCancel);
+      document.querySelector("#admin-cancel")?.removeEventListener("click", onCancel);
+      document.querySelector("#admin-modal-close")?.removeEventListener("click", onCancel);
+    };
+
+    adminForm.addEventListener("submit", onSubmit);
+    adminModal.addEventListener("cancel", onCancel);
+    document.querySelector("#admin-cancel")?.addEventListener("click", onCancel);
+    document.querySelector("#admin-modal-close")?.addEventListener("click", onCancel);
+  });
 }
 
 async function adminRefreshPredictions() {
@@ -114,7 +160,7 @@ async function adminRefreshPredictions() {
   const btn = document.querySelector("#btn-admin-predict");
   if (btn) {
     btn.disabled = true;
-    btn.textContent = "Refreshing predictions…";
+    btn.textContent = "Refreshing…";
   }
   try {
     await request("/admin/predictions/refresh", { method: "POST" });
@@ -124,7 +170,7 @@ async function adminRefreshPredictions() {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = "Admin: refresh predictions";
+      btn.textContent = "Refresh predictions";
     }
   }
 }
@@ -132,6 +178,8 @@ async function adminRefreshPredictions() {
 async function adminRunPipeline(mode) {
   if (!(await ensureAdminAuth())) return;
   const { updateProgressBar } = await import("./js/components.js");
+  const panel = document.getElementById("pipeline-progress");
+  if (panel) panel.classList.remove("hidden");
   try {
     await request(`/admin/pipeline/run?mode=${encodeURIComponent(mode)}`, { method: "POST" });
     await pollPipelineProgress((p) => updateProgressBar("pipeline-progress", p));

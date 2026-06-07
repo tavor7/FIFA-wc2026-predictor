@@ -238,9 +238,55 @@ export function dataFreshnessBadge(lastUpdated, meta = {}) {
   const ts = lastUpdated ? formatDateIsrael(lastUpdated) : "—";
   const badge = meta.stale ? "stale" : "fresh";
   return `<div class="data-freshness-badge badge-${badge}">
+    <span class="freshness-dot" aria-hidden="true"></span>
     <span>Updated ${escapeHtml(ts)}</span>
-    ${meta.responseTimeMs ? `<span class="muted">${escapeHtml(String(meta.responseTimeMs))}ms</span>` : ""}
+    ${meta.responseTimeMs ? `<span class="freshness-meta">${escapeHtml(String(meta.responseTimeMs))}ms</span>` : ""}
     ${meta.cache ? `<span class="cache-tag">${escapeHtml(meta.cache)}</span>` : ""}
+  </div>`;
+}
+
+export function pageHeaderHtml(title, subtitle = "") {
+  return `<header class="page-header-block">
+    <h2 class="page-title">${escapeHtml(title)}</h2>
+    ${subtitle ? `<p class="page-subtitle">${escapeHtml(subtitle)}</p>` : ""}
+  </header>`;
+}
+
+export function metricCard(label, value, status = "") {
+  const statusClass = status ? ` metric-${status}` : "";
+  return `<div class="metric-card${statusClass}">
+    <span class="metric-label">${escapeHtml(label)}</span>
+    <strong class="metric-value">${escapeHtml(String(value))}</strong>
+  </div>`;
+}
+
+export function latencyStatus(ms) {
+  if (ms == null || ms === "—") return "";
+  const n = Number(ms);
+  if (Number.isNaN(n)) return "";
+  if (n < 150) return "ok";
+  if (n < 400) return "warn";
+  return "bad";
+}
+
+export function adminPanelHtml() {
+  return `<div class="admin-panel">
+    <div class="admin-panel-head">
+      <div>
+        <h3 class="admin-panel-title">Pipeline controls</h3>
+        <p class="admin-panel-hint">Admin only · normal browsing uses fast read-only endpoints</p>
+      </div>
+    </div>
+    <div class="admin-panel-body">
+      <button class="btn-primary btn-pipeline-main" type="button" data-pipeline-mode="full_pipeline">
+        Run full pipeline
+      </button>
+      <div class="btn-row">
+        <button class="btn-secondary" type="button" data-pipeline-mode="data_sync_only">Sync data</button>
+        <button class="btn-secondary" type="button" data-pipeline-mode="predictions_only">Predictions</button>
+        <button class="btn-ghost" type="button" id="btn-admin-predict">Refresh predictions</button>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -276,7 +322,7 @@ export function updateProgressBar(panelId, progress) {
 
 export function freshnessBarHtml(data, pageMeta = {}) {
   const parts = [];
-  if (pageMeta.lastUpdated) {
+  if (pageMeta.lastUpdated && pageMeta.showTimestamp !== false) {
     parts.push(dataFreshnessBadge(pageMeta.lastUpdated, pageMeta));
   }
   if (data?.warnings?.length) {

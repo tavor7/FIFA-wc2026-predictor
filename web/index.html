@@ -46,7 +46,6 @@
               <h1>Research Platform</h1>
             </div>
           </div>
-          <a href="#/monitor" class="btn-secondary" title="Pipeline status & admin actions">Monitor</a>
         </div>
         <nav class="tabs" aria-label="Main navigation" id="main-nav">
           <a class="tab" href="#/" data-route="matches">Matches</a>
@@ -84,6 +83,32 @@
     <script src="/static/js/flags.js" type="module"></script>
     <script src="/static/js/components.js" type="module"></script>
     <script src="/static/js/pages.js" type="module"></script>
+    <dialog id="admin-modal" class="modal" aria-labelledby="admin-modal-title">
+      <div class="modal-inner admin-modal-inner">
+        <button type="button" class="modal-close" id="admin-modal-close" aria-label="Close">×</button>
+        <div class="admin-modal-icon" aria-hidden="true">🔐</div>
+        <h2 id="admin-modal-title" class="admin-modal-title">Admin access</h2>
+        <p class="admin-modal-desc">Enter your password to run pipeline jobs and refresh predictions.</p>
+        <form id="admin-form" class="admin-form">
+          <label class="admin-label" for="admin-password">Password</label>
+          <input
+            id="admin-password"
+            class="admin-input"
+            type="password"
+            name="password"
+            autocomplete="current-password"
+            placeholder="Enter admin password"
+            required
+          />
+          <p id="admin-modal-error" class="admin-modal-error hidden" role="alert"></p>
+          <div class="admin-form-actions">
+            <button type="button" class="btn-secondary" id="admin-cancel">Cancel</button>
+            <button type="submit" class="btn-primary">Continue</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
     <script src="/static/app.js" type="module"></script>
   </body>
 </html>

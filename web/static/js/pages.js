@@ -6,7 +6,7 @@ import {
   timelineHtml, lineupsHtml, statsGridHtml,
   factorChartHtml, renderFactorChart, simChartHtml, renderSimChart,
   liveProbChartHtml, renderLiveProbChart,
-  progressBarHtml, dataFreshnessBadge,
+  progressBarHtml, dataFreshnessBadge, pageHeaderHtml, metricCard, latencyStatus, adminPanelHtml,
   formatDate,
   formatDateIsrael,
   formatPct,
@@ -368,7 +368,7 @@ export async function pageMonitor() {
     request("/monitor/status"),
     request("/meta/freshness").catch(() => null),
   ]);
-  window.setPageMeta?.({ lastUpdated: status.last_updated });
+  window.setPageMeta?.({ lastUpdated: status.last_updated, showTimestamp: false });
   const calibration = await request("/evaluation/calibration?limit=30").catch(() => null);
   const dep = status.deployment || {};
   const counts = status.counts || status.table_counts || {};
@@ -398,24 +398,27 @@ export async function pageMonitor() {
 
   const keys = status.api_keys || {};
 
-  return disclaimerHtml(true) +
-    `<h2 class="page-title">Data Pipeline Status</h2>` +
-    `${dataFreshnessBadge(status.last_updated)}` +
+  const latency = dep.database_latency_ms;
+  const heartbeat = dep.last_scheduler_heartbeat
+    ? formatDateIsrael(dep.last_scheduler_heartbeat)
+    : (dep.scheduler_enabled ? "Pending first run" : "Scheduler off");
+
+  return pageHeaderHtml(
+    "Pipeline status",
+    "System health, data coverage, and admin jobs"
+  ) +
+    adminPanelHtml() +
     progressBarHtml("pipeline-progress") +
-    `<div class="page-intro admin-actions">
-      <button id="btn-admin-predict" class="btn-secondary" type="button">Refresh predictions</button>
-      <button class="btn-primary" type="button" data-pipeline-mode="full_pipeline">Run full pipeline</button>
-      <button class="btn-secondary" type="button" data-pipeline-mode="data_sync_only">Sync data only</button>
-      <button class="btn-secondary" type="button" data-pipeline-mode="predictions_only">Predictions only</button>
-      <span class="muted">Admin password required. Normal browsing uses read-only GET endpoints.</span>
-    </div>` +
-    section("Deployment", `<div class="form-grid">
-      <div class="form-card"><span>App version</span><strong>${escapeHtml(dep.app_version || "—")}</strong></div>
-      <div class="form-card"><span>Git commit</span><strong>${escapeHtml((dep.git_commit || "—").slice(0, 8))}</strong></div>
-      <div class="form-card"><span>DB latency</span><strong>${dep.database_latency_ms ?? "—"} ms</strong></div>
-      <div class="form-card"><span>Scheduler</span><strong>${dep.scheduler_enabled ? "enabled" : "disabled"}</strong></div>
-      <div class="form-card"><span>Started</span><strong>${formatDateIsrael(dep.app_start_time || "")}</strong></div>
-      <div class="form-card"><span>Last heartbeat</span><strong>${formatDateIsrael(dep.last_scheduler_heartbeat || "")}</strong></div>
+    (status.last_updated
+      ? `<div class="monitor-updated">${dataFreshnessBadge(status.last_updated)}</div>`
+      : "") +
+    section("Deployment", `<div class="metric-grid">
+      ${metricCard("App version", dep.app_version || "—")}
+      ${metricCard("Git commit", (dep.git_commit || "—").slice(0, 8))}
+      ${metricCard("DB latency", latency != null ? `${latency} ms` : "—", latencyStatus(latency))}
+      ${metricCard("Scheduler", dep.scheduler_enabled ? "Enabled" : "Disabled", dep.scheduler_enabled ? "ok" : "warn")}
+      ${metricCard("Started", formatDateIsrael(dep.app_start_time || "") || "—")}
+      ${metricCard("Last heartbeat", heartbeat, dep.last_scheduler_heartbeat ? "ok" : "warn")}
     </div>`) +
     section("Data loaded", tableHtml(["Entity", "Count"], countRows)) +
     section("Pipeline runs (latest per service)", tableHtml(
