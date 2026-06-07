@@ -154,8 +154,9 @@ export function matchCardHtml(match, { clickable = true, linkPrefix = "#/match" 
   const live = isLive(match.status);
   const pred = match.prediction;
   const top = pred?.top_scorelines?.[0];
-  const pickHome = pred?.predicted_home_goals ?? top?.home ?? 0;
-  const pickAway = pred?.predicted_away_goals ?? top?.away ?? 0;
+  // Poisson mode scoreline (integers); fall back to rounded stored pick (legacy rows may have λ)
+  const pickHome = top?.home ?? Math.round(Number(pred?.predicted_home_goals ?? 0));
+  const pickAway = top?.away ?? Math.round(Number(pred?.predicted_away_goals ?? 0));
   const pickPct = top?.probability ?? 0;
   const hasScore = match.home_goals != null && match.away_goals != null;
   const center = hasScore ? `${match.home_goals}–${match.away_goals}` : `${pickHome}–${pickAway}`;

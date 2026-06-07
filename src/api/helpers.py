@@ -46,9 +46,13 @@ def _list_prediction_dict(p: dict[str, Any]) -> dict[str, Any]:
     """Lightweight prediction for match cards — skips heavy ensemble JSON."""
     top_raw = p.get("top_scorelines_json")
     top_scorelines = json.loads(top_raw) if isinstance(top_raw, str) and top_raw else []
+    best = top_scorelines[0] if top_scorelines else {}
+    # Stored picks may be legacy λ decimals — prefer Poisson mode from top_scorelines
+    pick_h = int(best.get("home", round(float(p.get("predicted_home_goals") or 0))))
+    pick_a = int(best.get("away", round(float(p.get("predicted_away_goals") or 0))))
     return {
-        "predicted_home_goals": p["predicted_home_goals"],
-        "predicted_away_goals": p["predicted_away_goals"],
+        "predicted_home_goals": pick_h,
+        "predicted_away_goals": pick_a,
         "home_win_prob": p["home_win_prob"],
         "draw_prob": p["draw_prob"],
         "away_win_prob": p["away_win_prob"],
@@ -93,9 +97,12 @@ def match_with_prediction(row) -> dict[str, Any]:
     pred = db.get_prediction(int(m["id"]))
     if pred:
         p = prediction_payload(dict(pred))
+        best = (p.get("top_scorelines") or [{}])[0] if p.get("top_scorelines") else {}
+        pick_h = int(best.get("home", round(float(p.get("predicted_home_goals") or 0))))
+        pick_a = int(best.get("away", round(float(p.get("predicted_away_goals") or 0))))
         m["prediction"] = {
-            "predicted_home_goals": p["predicted_home_goals"],
-            "predicted_away_goals": p["predicted_away_goals"],
+            "predicted_home_goals": pick_h,
+            "predicted_away_goals": pick_a,
             "home_win_prob": p["home_win_prob"],
             "draw_prob": p["draw_prob"],
             "away_win_prob": p["away_win_prob"],

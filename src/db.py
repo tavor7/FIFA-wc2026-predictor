@@ -837,6 +837,13 @@ def upsert_prediction(
     live_prediction_json: Optional[dict[str, Any]] = None,
 ) -> None:
     now = datetime.utcnow().isoformat()
+    if top_scorelines:
+        best = top_scorelines[0]
+        predicted_home_goals = int(best.get("home", round(float(predicted_home_goals))))
+        predicted_away_goals = int(best.get("away", round(float(predicted_away_goals))))
+    else:
+        predicted_home_goals = int(round(float(predicted_home_goals)))
+        predicted_away_goals = int(round(float(predicted_away_goals)))
     with get_connection() as conn:
         _execute(
             conn,
