@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,6 +27,26 @@ logger = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent / "web"
 STATIC_DIR = WEB_DIR / "static"
 ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "true").lower() in ("1", "true", "yes")
+STARTUP_SEED = os.getenv("STARTUP_SEED", "true").lower() in ("1", "true", "yes")
+
+
+def _startup_seed_worker() -> None:
+    """Run after the server is listening — avoids Render deploy port-timeout."""
+    try:
+        ensure_baseline_data(min_matches=10, run_predictions=False)
+        logger.info("Background startup seed finished")
+    except Exception as exc:
+        logger.warning("Startup seed failed: %s", exc)
+
+
+def _delayed_scheduler_start() -> None:
+    """Start cron jobs after deploy health check passes."""
+    import time
+
+    time.sleep(30)
+    if ENABLE_SCHEDULER:
+        start_scheduler()
+        logger.info("Background scheduler enabled (delayed start)")
 
 
 class CacheControlMiddleware(BaseHTTPMiddleware):
@@ -51,13 +72,10 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI):
     db.init_db()
     load_models_on_startup()
-    try:
-        ensure_baseline_data(min_matches=10, run_predictions=True)
-    except Exception as exc:
-        logger.warning("Startup seed skipped: %s", exc)
+    if STARTUP_SEED:
+        threading.Thread(target=_startup_seed_worker, daemon=True).start()
     if ENABLE_SCHEDULER:
-        start_scheduler()
-        logger.info("Background scheduler enabled")
+        threading.Thread(target=_delayed_scheduler_start, daemon=True).start()
     yield
     stop_scheduler()
 

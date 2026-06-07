@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from datetime import datetime, timedelta
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -72,29 +74,40 @@ def start_scheduler(client: Optional[APIClient] = None) -> BackgroundScheduler:
         return _scheduler
 
     _scheduler = BackgroundScheduler()
+    job_defaults = {"max_instances": 1, "coalesce": True}
+    soon = datetime.utcnow() + timedelta(minutes=3)
+
     _scheduler.add_job(
         _sync_upcoming_job,
         IntervalTrigger(hours=6),
         id="sync_upcoming",
         replace_existing=True,
+        next_run_time=soon,
+        **job_defaults,
     )
     _scheduler.add_job(
         _sync_injuries_job,
         IntervalTrigger(hours=3),
         id="sync_injuries",
         replace_existing=True,
+        next_run_time=soon,
+        **job_defaults,
     )
     _scheduler.add_job(
         _sync_live_job,
-        IntervalTrigger(seconds=60),
+        IntervalTrigger(minutes=5),
         id="sync_live",
         replace_existing=True,
+        next_run_time=soon,
+        **job_defaults,
     )
     _scheduler.add_job(
         _daily_retrain_job,
         IntervalTrigger(hours=24),
         id="daily_retrain",
         replace_existing=True,
+        next_run_time=soon,
+        **job_defaults,
     )
     _scheduler.start()
     logger.info("Scheduler started")
