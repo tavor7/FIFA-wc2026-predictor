@@ -5,28 +5,49 @@
 Architecture:
 
 ```
-Phone (Expo app)  →  Render (FastAPI API)  →  SQLite + football APIs
+Phone (Expo app)  →  Render (FastAPI API)  →  Supabase Postgres + football APIs
 ```
 
 ---
 
-## Step 1 — Deploy the API on Render
+## Step 1 — Set up Supabase (database)
 
-Repo: [github.com/tavor7/FIFA-wc2026-predictor](https://github.com/tavor7/FIFA-wc2026-predictor)
+Full guide: **[supabase/README.md](supabase/README.md)**
 
-1. [dashboard.render.com](https://dashboard.render.com) → **New +** → **Blueprint**
-2. Select your repo (uses `render.yaml`)
-3. Set secret env vars: `API_FOOTBALL_KEY`, `FOOTBALL_DATA_KEY`
-4. Deploy → copy your API URL, e.g. `https://fifa-wc2026-api.onrender.com`
-
-Test: open `https://YOUR-API.onrender.com/health`
-
-> If you already deployed Streamlit on Render, **update the Start Command** to:
-> `uvicorn api_server:app --host 0.0.0.0 --port $PORT`
+1. Create a free project at [supabase.com](https://supabase.com)
+2. **SQL Editor** → run [`supabase/schema.sql`](supabase/schema.sql)
+3. **Project Settings → Database** → copy **Connection string** (URI, pooler port 6543)
+4. Save it — you'll add it to Render as `DATABASE_URL`
 
 ---
 
-## Step 2 — Run Expo on your phone
+## Step 2 — Deploy the API on Render
+
+Repo: [github.com/tavor7/FIFA-wc2026-predictor](https://github.com/tavor7/FIFA-wc2026-predictor)
+
+1. [dashboard.render.com](https://dashboard.render.com) → your service → **Environment**
+2. Add env vars:
+
+| Key | Value |
+|-----|--------|
+| `API_FOOTBALL_KEY` | your key |
+| `FOOTBALL_DATA_KEY` | your key |
+| `DATABASE_URL` | Supabase connection string |
+
+3. **Start Command:** `uvicorn api_server:app --host 0.0.0.0 --port $PORT`
+4. Deploy → copy API URL
+
+Test: `https://YOUR-API.onrender.com/health` should show `"database": "supabase_postgres"`
+
+Then bootstrap once:
+
+```bash
+curl -X POST https://YOUR-API.onrender.com/bootstrap
+```
+
+---
+
+## Step 3 — Run Expo on your phone
 
 ```bash
 cd mobile

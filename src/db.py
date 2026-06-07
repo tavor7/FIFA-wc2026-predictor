@@ -1,4 +1,4 @@
-"""SQLite database layer for match, stats, and prediction storage."""
+"""Database layer — Supabase Postgres (production) or SQLite (local dev)."""
 
 from __future__ import annotations
 
@@ -6,34 +6,79 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Generator, Optional
+from typing import Any, Generator, Optional, Union
 
 from src import config
 
+Row = Union[dict[str, Any], sqlite3.Row]
+
+
+def _adapt_sql(sql: str) -> str:
+    """Convert SQLite-style ? placeholders to PostgreSQL %s when needed."""
+    if config.USE_POSTGRES:
+        return sql.replace("?", "%s")
+    return sql
+
+
+def _normalize_db_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql://", 1)
+    return url
+
 
 def _ensure_db_dir() -> None:
-    config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if not config.USE_POSTGRES:
+        config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 @contextmanager
-def get_connection() -> Generator[sqlite3.Connection, None, None]:
-    """Yield a SQLite connection with row factory enabled."""
+def get_connection() -> Generator[Any, None, None]:
+    """Yield a database connection (SQLite or Supabase Postgres)."""
     _ensure_db_dir()
-    conn = sqlite3.connect(config.DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    if config.USE_POSTGRES:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        conn = psycopg.connect(
+            _normalize_db_url(config.DATABASE_URL),
+            row_factory=dict_row,
+        )
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    else:
+        conn = sqlite3.connect(config.DB_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 
-SCHEMA = """
+def _execute(conn: Any, sql: str, params: tuple | list = ()) -> Any:
+    return conn.execute(_adapt_sql(sql), params)
+
+
+def _executescript(conn: Any, script: str) -> None:
+    if config.USE_POSTGRES:
+        for stmt in filter(None, (s.strip() for s in script.split(";"))):
+            if stmt.upper().startswith("CREATE INDEX") or stmt.upper().startswith("CREATE TABLE"):
+                conn.execute(stmt)
+    else:
+        conn.executescript(script)
+
+
+SCHEMA_SQLITE = """
 CREATE TABLE IF NOT EXISTS matches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     external_fixture_id TEXT UNIQUE NOT NULL,
@@ -110,11 +155,21 @@ CREATE INDEX IF NOT EXISTS idx_matches_status ON matches(status);
 CREATE INDEX IF NOT EXISTS idx_matches_teams ON matches(home_team, away_team);
 """
 
+SCHEMA_POSTGRES = open(
+    config.PROJECT_ROOT / "supabase" / "schema.sql", encoding="utf-8"
+).read()
+
 
 def init_db() -> None:
     """Create tables if they do not exist."""
     with get_connection() as conn:
-        conn.executescript(SCHEMA)
+        script = SCHEMA_POSTGRES if config.USE_POSTGRES else SCHEMA_SQLITE
+        _executescript(conn, script)
+
+
+def db_backend() -> str:
+    """Return active database backend label."""
+    return "supabase_postgres" if config.USE_POSTGRES else "sqlite"
 
 
 def upsert_match(
@@ -134,7 +189,8 @@ def upsert_match(
     """Insert or update a match row; return internal match id."""
     now = datetime.utcnow().isoformat()
     with get_connection() as conn:
-        conn.execute(
+        _execute(
+            conn,
             """
             INSERT INTO matches (
                 external_fixture_id, date, league, season,
@@ -156,22 +212,13 @@ def upsert_match(
                 last_updated=excluded.last_updated
             """,
             (
-                external_fixture_id,
-                date,
-                league,
-                season,
-                home_team,
-                away_team,
-                home_team_id,
-                away_team_id,
-                status,
-                home_goals,
-                away_goals,
-                venue,
-                now,
+                external_fixture_id, date, league, season,
+                home_team, away_team, home_team_id, away_team_id,
+                status, home_goals, away_goals, venue, now,
             ),
         )
-        row = conn.execute(
+        row = _execute(
+            conn,
             "SELECT id FROM matches WHERE external_fixture_id = ?",
             (external_fixture_id,),
         ).fetchone()
@@ -179,9 +226,9 @@ def upsert_match(
 
 
 def upsert_team_stats(match_id: int, team: str, stats: dict[str, Any]) -> None:
-    """Insert or replace team match statistics."""
     with get_connection() as conn:
-        conn.execute(
+        _execute(
+            conn,
             """
             INSERT INTO team_match_stats (
                 match_id, team, shots, shots_on_target, possession,
@@ -199,34 +246,22 @@ def upsert_team_stats(match_id: int, team: str, stats: dict[str, Any]) -> None:
                 red_cards=excluded.red_cards
             """,
             (
-                match_id,
-                team,
-                stats.get("shots"),
-                stats.get("shots_on_target"),
-                stats.get("possession"),
-                stats.get("passes"),
-                stats.get("pass_accuracy"),
-                stats.get("corners"),
-                stats.get("fouls"),
-                stats.get("yellow_cards"),
-                stats.get("red_cards"),
+                match_id, team,
+                stats.get("shots"), stats.get("shots_on_target"), stats.get("possession"),
+                stats.get("passes"), stats.get("pass_accuracy"), stats.get("corners"),
+                stats.get("fouls"), stats.get("yellow_cards"), stats.get("red_cards"),
             ),
         )
 
 
 def upsert_lineup(
-    match_id: int,
-    team: str,
-    player_id: Optional[int],
-    player_name: str,
-    position: Optional[str],
-    is_starting: bool,
-    rating: Optional[float],
+    match_id: int, team: str, player_id: Optional[int], player_name: str,
+    position: Optional[str], is_starting: bool, rating: Optional[float],
     minutes: Optional[int],
 ) -> None:
-    """Insert or replace a lineup entry."""
     with get_connection() as conn:
-        conn.execute(
+        _execute(
+            conn,
             """
             INSERT INTO lineups (
                 match_id, team, player_id, player_name, position,
@@ -239,38 +274,25 @@ def upsert_lineup(
                 rating=excluded.rating,
                 minutes=excluded.minutes
             """,
-            (
-                match_id,
-                team,
-                player_id,
-                player_name,
-                position,
-                1 if is_starting else 0,
-                rating,
-                minutes,
-            ),
+            (match_id, team, player_id, player_name, position,
+             1 if is_starting else 0, rating, minutes),
         )
 
 
 def clear_lineups_for_match(match_id: int) -> None:
-    """Remove all lineup rows for a match before re-sync."""
     with get_connection() as conn:
-        conn.execute("DELETE FROM lineups WHERE match_id = ?", (match_id,))
+        _execute(conn, "DELETE FROM lineups WHERE match_id = ?", (match_id,))
 
 
 def upsert_injury(
-    player_id: Optional[int],
-    player_name: str,
-    team: str,
-    injury_type: Optional[str],
-    reason: Optional[str],
-    expected_return: Optional[str],
+    player_id: Optional[int], player_name: str, team: str,
+    injury_type: Optional[str], reason: Optional[str], expected_return: Optional[str],
 ) -> None:
-    """Insert or update an injury record."""
     now = datetime.utcnow().isoformat()
     pid = player_id if player_id is not None else hash(f"{player_name}_{team}") % (10**9)
     with get_connection() as conn:
-        conn.execute(
+        _execute(
+            conn,
             """
             INSERT INTO injuries (
                 player_id, player_name, team, injury_type, reason,
@@ -288,20 +310,14 @@ def upsert_injury(
 
 
 def upsert_prediction(
-    match_id: int,
-    predicted_home_goals: float,
-    predicted_away_goals: float,
-    home_win_prob: float,
-    draw_prob: float,
-    away_win_prob: float,
-    exact_score_prob: float,
-    top_scorelines: list[dict[str, Any]],
-    explanation: str,
+    match_id: int, predicted_home_goals: float, predicted_away_goals: float,
+    home_win_prob: float, draw_prob: float, away_win_prob: float,
+    exact_score_prob: float, top_scorelines: list[dict[str, Any]], explanation: str,
 ) -> None:
-    """Store or update a match prediction."""
     now = datetime.utcnow().isoformat()
     with get_connection() as conn:
-        conn.execute(
+        _execute(
+            conn,
             """
             INSERT INTO predictions (
                 match_id, generated_at, predicted_home_goals, predicted_away_goals,
@@ -320,49 +336,39 @@ def upsert_prediction(
                 explanation=excluded.explanation
             """,
             (
-                match_id,
-                now,
-                predicted_home_goals,
-                predicted_away_goals,
-                home_win_prob,
-                draw_prob,
-                away_win_prob,
-                exact_score_prob,
-                json.dumps(top_scorelines),
-                explanation,
+                match_id, now, predicted_home_goals, predicted_away_goals,
+                home_win_prob, draw_prob, away_win_prob, exact_score_prob,
+                json.dumps(top_scorelines), explanation,
             ),
         )
 
 
-def get_match_by_id(match_id: int) -> Optional[sqlite3.Row]:
-    """Fetch a single match by internal id."""
+def get_match_by_id(match_id: int) -> Optional[Row]:
     with get_connection() as conn:
-        return conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
+        return _execute(conn, "SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
 
 
-def get_match_by_external_id(external_id: str) -> Optional[sqlite3.Row]:
-    """Fetch a match by external fixture id."""
+def get_match_by_external_id(external_id: str) -> Optional[Row]:
     with get_connection() as conn:
-        return conn.execute(
-            "SELECT * FROM matches WHERE external_fixture_id = ?",
-            (external_id,),
+        return _execute(
+            conn, "SELECT * FROM matches WHERE external_fixture_id = ?", (external_id,)
         ).fetchone()
 
 
-def get_matches_by_status(statuses: list[str]) -> list[sqlite3.Row]:
-    """Return matches matching any of the given statuses."""
+def get_matches_by_status(statuses: list[str]) -> list[Row]:
     placeholders = ",".join("?" * len(statuses))
     with get_connection() as conn:
-        return conn.execute(
+        return _execute(
+            conn,
             f"SELECT * FROM matches WHERE status IN ({placeholders}) ORDER BY date",
             statuses,
         ).fetchall()
 
 
-def get_upcoming_matches(limit: int = 50) -> list[sqlite3.Row]:
-    """Return scheduled/not-started matches ordered by date."""
+def get_upcoming_matches(limit: int = 50) -> list[Row]:
     with get_connection() as conn:
-        return conn.execute(
+        return _execute(
+            conn,
             """
             SELECT * FROM matches
             WHERE status IN ('NS', 'TBD', 'SCHEDULED', 'TIMED', 'Not Started')
@@ -375,16 +381,14 @@ def get_upcoming_matches(limit: int = 50) -> list[sqlite3.Row]:
         ).fetchall()
 
 
-def get_live_matches() -> list[sqlite3.Row]:
-    """Return matches currently in play."""
-    live_statuses = ("1H", "2H", "HT", "ET", "BT", "P", "LIVE", "IN_PLAY", "PAUSED")
-    return get_matches_by_status(list(live_statuses))
+def get_live_matches() -> list[Row]:
+    return get_matches_by_status(["1H", "2H", "HT", "ET", "BT", "P", "LIVE", "IN_PLAY", "PAUSED"])
 
 
-def get_recent_matches(limit: int = 50) -> list[sqlite3.Row]:
-    """Return finished matches ordered by most recent."""
+def get_recent_matches(limit: int = 50) -> list[Row]:
     with get_connection() as conn:
-        return conn.execute(
+        return _execute(
+            conn,
             """
             SELECT * FROM matches
             WHERE status IN ('FT', 'AET', 'PEN', 'FINISHED')
@@ -395,78 +399,70 @@ def get_recent_matches(limit: int = 50) -> list[sqlite3.Row]:
         ).fetchall()
 
 
-def get_all_finished_matches() -> list[sqlite3.Row]:
-    """Return all finished matches for training."""
+def get_all_finished_matches() -> list[Row]:
     with get_connection() as conn:
-        return conn.execute(
+        return _execute(
+            conn,
             """
             SELECT * FROM matches
             WHERE status IN ('FT', 'AET', 'PEN', 'FINISHED')
-              AND home_goals IS NOT NULL
-              AND away_goals IS NOT NULL
+              AND home_goals IS NOT NULL AND away_goals IS NOT NULL
             ORDER BY date ASC
-            """
+            """,
         ).fetchall()
 
 
-def get_prediction(match_id: int) -> Optional[sqlite3.Row]:
-    """Fetch prediction for a match."""
+def get_prediction(match_id: int) -> Optional[Row]:
     with get_connection() as conn:
-        return conn.execute(
-            "SELECT * FROM predictions WHERE match_id = ?", (match_id,)
-        ).fetchone()
+        return _execute(conn, "SELECT * FROM predictions WHERE match_id = ?", (match_id,)).fetchone()
 
 
-def get_all_predictions() -> list[sqlite3.Row]:
-    """Return all predictions joined with match info."""
+def get_all_predictions() -> list[Row]:
     with get_connection() as conn:
-        return conn.execute(
+        return _execute(
+            conn,
             """
             SELECT p.*, m.home_team, m.away_team, m.date, m.status
             FROM predictions p
             JOIN matches m ON m.id = p.match_id
             ORDER BY m.date ASC
-            """
+            """,
         ).fetchall()
 
 
-def get_lineups(match_id: int) -> list[sqlite3.Row]:
-    """Return lineup rows for a match."""
+def get_lineups(match_id: int) -> list[Row]:
     with get_connection() as conn:
-        return conn.execute(
+        return _execute(
+            conn,
             "SELECT * FROM lineups WHERE match_id = ? ORDER BY team, is_starting DESC",
             (match_id,),
         ).fetchall()
 
 
-def get_injuries_for_teams(teams: list[str]) -> list[sqlite3.Row]:
-    """Return injuries for given team names."""
+def get_injuries_for_teams(teams: list[str]) -> list[Row]:
     if not teams:
         return []
     placeholders = ",".join("?" * len(teams))
     with get_connection() as conn:
-        return conn.execute(
-            f"SELECT * FROM injuries WHERE team IN ({placeholders})",
-            teams,
+        return _execute(
+            conn, f"SELECT * FROM injuries WHERE team IN ({placeholders})", teams
         ).fetchall()
 
 
-def get_team_match_stats(match_id: int) -> list[sqlite3.Row]:
-    """Return team stats for a match."""
+def get_team_match_stats(match_id: int) -> list[Row]:
     with get_connection() as conn:
-        return conn.execute(
-            "SELECT * FROM team_match_stats WHERE match_id = ?",
-            (match_id,),
+        return _execute(
+            conn, "SELECT * FROM team_match_stats WHERE match_id = ?", (match_id,)
         ).fetchall()
 
 
-def get_team_recent_matches(team: str, before_date: str, limit: int = 5) -> list[sqlite3.Row]:
-    """Return recent finished matches involving a team before a given date."""
+def get_team_recent_matches(team: str, before_date: str, limit: int = 5) -> list[Row]:
     from src.team_profiles import normalize_team_name
 
     team = normalize_team_name(team)
     with get_connection() as conn:
-        return conn.execute(
+        return _execute(
+            conn,
             """
             SELECT * FROM matches
             WHERE (home_team = ? OR away_team = ?)
@@ -481,12 +477,12 @@ def get_team_recent_matches(team: str, before_date: str, limit: int = 5) -> list
 
 
 def get_team_all_time_averages(team: str) -> dict[str, float]:
-    """Compute average goals scored/conceded and form from all finished matches in DB."""
     from src.team_profiles import normalize_team_name
 
     team = normalize_team_name(team)
     with get_connection() as conn:
-        rows = conn.execute(
+        rows = _execute(
+            conn,
             """
             SELECT * FROM matches
             WHERE (home_team = ? OR away_team = ?)

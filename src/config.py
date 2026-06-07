@@ -33,7 +33,9 @@ SEASON: int = int(_env("SEASON", "2026"))
 # football-data.org uses competition id 2000 for FIFA World Cup (not 1)
 FOOTBALL_DATA_COMPETITION_ID: int = int(_env("FOOTBALL_DATA_COMPETITION_ID", "2000"))
 
-# Database
+# Database — Supabase Postgres in production, SQLite locally
+DATABASE_URL: str = _env("DATABASE_URL") or _env("SUPABASE_DATABASE_URL")
+USE_POSTGRES: bool = bool(DATABASE_URL)
 DB_PATH: Path = PROJECT_ROOT / _env("DB_PATH", "data/football.db")
 
 # API settings

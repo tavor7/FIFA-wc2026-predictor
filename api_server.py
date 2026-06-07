@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from src import db
+from src.db import db_backend
 from src.predict import generate_predictions, retrain_and_predict
 from src.sync_injuries import sync_injuries
 from src.sync_live_data import sync_live_data
@@ -69,6 +70,7 @@ def health() -> dict[str, str]:
         "status": "ok",
         "author": AUTHOR,
         "disclaimer": DISCLAIMER,
+        "database": db_backend(),
     }
 
 
