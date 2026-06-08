@@ -48,6 +48,14 @@ else
   echo "Mode: Supabase (shared with Render — pipeline & sync update production data)"
 fi
 
+if lsof -i ":${PORT}" -t >/dev/null 2>&1; then
+  echo ""
+  echo "ERROR: Port ${PORT} is already in use (another uvicorn/server is running)."
+  echo "  • Stop it: Ctrl+C in that terminal, or run: kill \$(lsof -t -i :${PORT})"
+  echo "  • Or use another port: PORT=8001 ./scripts/dev.sh"
+  exit 1
+fi
+
 echo "Scheduler: ${ENABLE_SCHEDULER:-false}  |  Startup seed: ${STARTUP_SEED:-true}"
 echo "API:  http://127.0.0.1:${PORT}"
 echo "UI:   http://127.0.0.1:${PORT}/#/monitor"
