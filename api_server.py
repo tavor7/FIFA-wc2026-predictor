@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 STATIC_DIR = WEB_DIR / "static"
-ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "true").lower() in ("1", "true", "yes")
-STARTUP_SEED = os.getenv("STARTUP_SEED", "true").lower() in ("1", "true", "yes")
+ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "false").lower() in ("1", "true", "yes")
+STARTUP_SEED = os.getenv("STARTUP_SEED", "false").lower() in ("1", "true", "yes")
 
 
 def _background_startup() -> None:
@@ -45,11 +45,12 @@ def _background_startup() -> None:
     except Exception as exc:
         logger.error("Database initialization failed: %s", exc)
         return
-    _startup_seed_worker()
+    if STARTUP_SEED:
+        _startup_seed_worker()
 
 
 def _startup_seed_worker() -> None:
-    """Baseline data load and FC26 import when needed."""
+    """Baseline data load and FC26 import when needed (opt-in via STARTUP_SEED)."""
     try:
         ensure_baseline_data(min_matches=10, run_predictions=False)
         from src import db_extended as ext
@@ -82,6 +83,8 @@ class TimingAndCacheMiddleware(BaseHTTPMiddleware):
     """Response timing headers, cache detection, and persisted API metrics."""
 
     CACHE_PATHS = (
+        "/home-lite",
+        "/match-lite",
         "/home",
         "/matches",
         "/teams",

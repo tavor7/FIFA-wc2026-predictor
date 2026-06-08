@@ -16,7 +16,7 @@ from src.analytics.momentum import MomentumEngine
 from src.analytics.team_form import TeamFormAnalyzer
 from src.api.admin_auth import require_admin, verify_password
 from src.api.helpers import home_dashboard, match_with_prediction, matches_with_predictions, row_to_dict, team_meta
-from src.api import screen_handlers
+from src.api import lite_handlers, screen_handlers
 from src import db_pipeline as pipe_db
 from src.cache.response_cache import (
     cache_key,
@@ -112,6 +112,59 @@ def freshness() -> dict[str, Any]:
 @router.get("/stats")
 def stats() -> dict[str, int]:
     return db.get_platform_stats(tournament_only=True)
+
+
+@router.get("/home-lite")
+def home_lite(limit: int = 48, live_limit: int = 8) -> dict[str, Any]:
+    """Fast home payload — read-only, cached 60s."""
+    key = cache_key("/home-lite", f"limit={limit}&live={live_limit}")
+    hit = get_cached(key)
+    if hit is not None:
+        return hit
+    payload = lite_handlers.get_home_lite(limit=limit, live_limit=live_limit)
+    if payload.get("last_prediction_update"):
+        from src.cache.response_cache import set_cache_meta
+
+        set_cache_meta(last_prediction_update=str(payload["last_prediction_update"]))
+    set_cached(key, payload, _ttl_for_path("/home-lite"))
+    return payload
+
+
+@router.get("/match-lite/{match_id}")
+def match_lite(match_id: int) -> dict[str, Any]:
+    key = cache_key(f"/match-lite/{match_id}", "")
+    hit = get_cached(key)
+    if hit is not None:
+        return hit
+    detail = lite_handlers.get_match_lite(match_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Match not found")
+    set_cached(key, detail, _ttl_for_path("/match-lite"))
+    return detail
+
+
+@router.get("/teams-lite/{slug}")
+def team_lite(slug: str) -> dict[str, Any]:
+    detail = lite_handlers.get_team_lite(slug)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Team not found")
+    return detail
+
+
+@router.get("/monitor/lite")
+def monitor_lite() -> dict[str, Any]:
+    key = cache_key("/monitor/lite", "")
+    hit = get_cached(key)
+    if hit is not None:
+        return hit
+    payload = lite_handlers.get_monitor_lite()
+    set_cached(key, payload, 15)
+    return payload
+
+
+@router.get("/debug/core-status")
+def debug_core_status() -> dict[str, Any]:
+    return lite_handlers.get_core_status()
 
 
 @router.get("/home")
@@ -632,14 +685,20 @@ def sync_full(
 @router.post("/admin/predictions/refresh")
 def admin_refresh_predictions(bg: BackgroundTasks, _auth: None = Depends(require_admin)) -> dict[str, str]:
     def _job() -> None:
-        PredictionGenerationService().generate_all()
+        try:
+            PredictionGenerationService().generate_all()
+        finally:
+            invalidate_all()
 
     bg.add_task(_job)
     return {"status": "started", "message": "Regenerating all predictions in background"}
 
 
 @router.post("/predictions/generate")
-def gen_predictions(bg: BackgroundTasks) -> dict[str, Any]:
+def gen_predictions(
+    bg: BackgroundTasks,
+    _auth: None = Depends(require_admin),
+) -> dict[str, Any]:
     def _job() -> None:
         if len(db.get_all_finished_matches()) < 10:
             sync_historical_seasons()
@@ -650,7 +709,7 @@ def gen_predictions(bg: BackgroundTasks) -> dict[str, Any]:
 
 
 @router.post("/model/retrain")
-def retrain() -> dict[str, Any]:
+def retrain(_auth: None = Depends(require_admin)) -> dict[str, Any]:
     return ModelTrainingService().retrain_and_predict()
 
 

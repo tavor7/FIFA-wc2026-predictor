@@ -71,6 +71,7 @@ export function outcomeBar(pred) {
   const d = (pred.draw_prob * 100).toFixed(0);
   const a = (pred.away_win_prob * 100).toFixed(0);
   return `<div class="outcome-wrap">
+    <div class="outcome-label">Outcome probabilities</div>
     <div class="outcome-bar" title="Home ${h}% · Draw ${d}% · Away ${a}%">
       <span class="bar-home" style="width:${h}%"></span>
       <span class="bar-draw" style="width:${d}%"></span>
@@ -97,9 +98,9 @@ export function confidenceBlock(pred) {
     : "";
   return `<div class="confidence-block">
     ${updated}
-    <div class="conf-row"><span>Confidence</span><strong>${conf}</strong></div>
+    <div class="conf-row"><span>Prediction confidence</span><strong>${conf}</strong></div>
     <div class="conf-row"><span>Data completeness</span><strong>${data}</strong></div>
-    <div class="conf-row"><span>Model agreement</span><strong class="agree-${String(agree).toLowerCase()}">${agree}</strong></div>
+    ${agree !== "—" ? `<div class="conf-row"><span>Model agreement</span><strong class="agree-${String(agree).toLowerCase()}">${agree}</strong></div>` : ""}
     ${stale}
   </div>`;
 }
@@ -212,8 +213,8 @@ export function matchCardHtml(match, { clickable = true, linkPrefix = "#/match" 
   const pickRow = hasScore
     ? `<div class="pick-row"><span class="pick-label">FINAL</span></div>`
     : `<div class="pick-row">
-        <span class="pick-label">PICK</span>
-        ${pickPct > 0 ? `<span class="pick-conf" title="Exact-score probability is naturally low">Most likely: ${pickHome}–${pickAway} (${(pickPct * 100).toFixed(0)}%)</span>` : ""}
+        <span class="pick-label">Most likely scoreline</span>
+        <span class="pick-conf">${pickHome}–${pickAway}${pickPct > 0 ? ` <span class="muted">(${(pickPct * 100).toFixed(0)}% exact score)</span>` : ""}</span>
         ${sourceBadge}
       </div>`;
 

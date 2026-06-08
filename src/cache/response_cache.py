@@ -9,6 +9,8 @@ from typing import Any, Callable, Optional
 _CACHE: dict[str, tuple[float, Any]] = {}
 
 TTL_SECONDS: dict[str, int] = {
+    "/home-lite": 60,
+    "/match-lite": 60,
     "/home": 90,
     "/matches": 90,
     "/matches/live": 30,

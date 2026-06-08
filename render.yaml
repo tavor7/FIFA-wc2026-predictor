@@ -15,9 +15,11 @@ services:
       - key: FOOTBALL_DATA_COMPETITION_ID
         value: "2000"
       - key: ENABLE_SCHEDULER
-        value: "true"
+        value: "false"
+      - key: STARTUP_SEED
+        value: "false"
       - key: PERSIST_OBSERVABILITY
-        value: "true"
+        value: "false"
       - key: API_FOOTBALL_KEY
         sync: false
       - key: FOOTBALL_DATA_KEY

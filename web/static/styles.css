@@ -475,6 +475,19 @@ main {
   margin-top: 1rem;
 }
 
+.outcome-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.35rem;
+}
+
+.pick-conf .muted {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .outcome-bar {
   display: flex;
   height: 6px;

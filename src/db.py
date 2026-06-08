@@ -1420,6 +1420,144 @@ def get_home_feed(limit: int = 48, tournament_only: bool = True) -> dict[str, An
     }
 
 
+def get_home_lite_feed(upcoming_limit: int = 48, live_limit: int = 8) -> dict[str, Any]:
+    """Upcoming + live matches + batch predictions in one connection."""
+    wc = WC_FILTER_SQL
+    wc_params = _wc_filter_params()
+    live_statuses = ("1H", "2H", "HT", "ET", "BT", "P", "LIVE", "IN_PLAY", "PAUSED")
+    live_ph = ",".join("?" * len(live_statuses))
+    upcoming_where = f"""
+        (
+            status IN ('NS', 'TBD', 'SCHEDULED', 'TIMED', 'Not Started')
+            OR (status NOT IN ('FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO')
+                AND home_goals IS NULL)
+        ){wc}
+    """
+    live_where = f"status IN ({live_ph}){wc}"
+    stats_params = wc_params + list(live_statuses) + wc_params
+
+    with get_connection() as conn:
+        stats_row = _execute(
+            conn,
+            f"""
+            SELECT
+                (SELECT COUNT(*) FROM matches WHERE {upcoming_where}) AS upcoming,
+                (SELECT COUNT(*) FROM matches WHERE {live_where}) AS live,
+                (SELECT COUNT(*) FROM predictions) AS predictions,
+                (SELECT MAX(generated_at) FROM predictions) AS last_prediction_update
+            """,
+            stats_params,
+        ).fetchone()
+        upcoming_rows = _execute(
+            conn,
+            f"""
+            SELECT id, home_team, away_team, date, status, stage, group_name, home_goals, away_goals
+            FROM matches WHERE {upcoming_where}
+            ORDER BY date ASC LIMIT ?
+            """,
+            wc_params + [upcoming_limit],
+        ).fetchall()
+        live_rows = _execute(
+            conn,
+            f"""
+            SELECT id, home_team, away_team, date, status, stage, group_name, home_goals, away_goals
+            FROM matches WHERE {live_where}
+            ORDER BY date ASC LIMIT ?
+            """,
+            wc_params + list(live_statuses) + [live_limit],
+        ).fetchall()
+        ids = list({int(dict(r)["id"]) for r in upcoming_rows + live_rows})
+        pred_map: dict[int, Row] = {}
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            for row in _execute(
+                conn,
+                f"SELECT * FROM predictions WHERE match_id IN ({placeholders})",
+                ids,
+            ).fetchall():
+                pred_map[int(dict(row)["match_id"])] = row
+
+    sd = dict(stats_row)
+    return {
+        "stats": {
+            "upcoming": int(sd["upcoming"]),
+            "live": int(sd["live"]),
+            "predictions": int(sd["predictions"]),
+        },
+        "upcoming": upcoming_rows,
+        "live": live_rows,
+        "predictions": pred_map,
+        "last_prediction_update": sd.get("last_prediction_update"),
+    }
+
+
+def get_match_lite_bundle(match_id: int) -> Optional[dict[str, Any]]:
+    """Match + prediction + light extras in one connection (no feature_store)."""
+    with get_connection() as conn:
+        row = _execute(
+            conn,
+            """
+            SELECT id, home_team, away_team, date, status, stage, group_name, home_goals, away_goals
+            FROM matches WHERE id = ?
+            """,
+            (match_id,),
+        ).fetchone()
+        if not row:
+            return None
+        match = dict(row)
+        pred_row = _execute(conn, "SELECT * FROM predictions WHERE match_id = ?", (match_id,)).fetchone()
+        lineups = _execute(conn, "SELECT * FROM lineups WHERE match_id = ?", (match_id,)).fetchall()
+        team_stats = _execute(conn, "SELECT * FROM team_match_stats WHERE match_id = ?", (match_id,)).fetchall()
+    injuries = [dict(i) for i in get_injuries_for_teams([match["home_team"], match["away_team"]])]
+    return {
+        "match": match,
+        "prediction": dict(pred_row) if pred_row else None,
+        "injuries": injuries,
+        "lineups": [dict(l) for l in lineups] if lineups else None,
+        "team_stats": [dict(s) for s in team_stats],
+    }
+
+
+def get_latest_prediction_timestamp() -> Optional[str]:
+    with get_connection() as conn:
+        row = _execute(conn, "SELECT MAX(generated_at) AS ts FROM predictions").fetchone()
+    if not row:
+        return None
+    return dict(row).get("ts")
+
+
+def get_prediction_source_counts() -> dict[str, int]:
+    with get_connection() as conn:
+        rows = _execute(
+            conn,
+            """
+            SELECT COALESCE(prediction_source_mode, 'unknown') AS mode, COUNT(*) AS c
+            FROM predictions GROUP BY prediction_source_mode
+            """,
+        ).fetchall()
+    baseline = full_model = 0
+    for r in rows:
+        mode = dict(r)["mode"]
+        count = int(dict(r)["c"])
+        if mode == "full_model":
+            full_model += count
+        elif mode in ("baseline_only", "heuristic_plus_elo", "insufficient_data", "ensemble_without_xgb"):
+            baseline += count
+    return {"baseline": baseline, "full_model": full_model}
+
+
+def count_empty_explanations() -> int:
+    with get_connection() as conn:
+        row = _execute(
+            conn,
+            """
+            SELECT COUNT(*) AS c FROM predictions
+            WHERE explanation IS NULL OR TRIM(explanation) = ''
+            """,
+        ).fetchone()
+    return int(dict(row)["c"]) if row else 0
+
+
 def get_all_predictions() -> list[Row]:
     with get_connection() as conn:
         return _execute(

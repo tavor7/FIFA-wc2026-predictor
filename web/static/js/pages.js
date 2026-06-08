@@ -39,8 +39,8 @@ function regionalVenueCard(form) {
 }
 
 export async function pageMatches() {
-  const data = await request("/home");
-  window.setPageMeta?.({ lastUpdated: data.last_updated });
+  const data = await request("/home-lite");
+  window.setPageMeta?.({ lastUpdated: data.last_updated || data.last_prediction_update });
   const stats = data.stats || {};
   const matches = data.matches || [];
   const live = data.live || [];
@@ -50,12 +50,13 @@ export async function pageMatches() {
   }
   html += matches.length
     ? matches.map((m) => matchCardHtml(m)).join("")
-    : `<p class="empty">No matches yet. Open <a href="#/monitor">Monitor</a> to run the data pipeline (admin).</p>`;
+    : `<p class="empty">No matches loaded yet. Open <a href="#/monitor">Monitor</a> (admin) to refresh predictions.</p>`;
   return html;
 }
 
 export async function pageLive() {
-  const matches = await request("/matches/live");
+  const data = await request("/home-lite");
+  const matches = data.live || [];
   return disclaimerHtml() +
     (matches.length
       ? matches.map((m) => matchCardHtml(m)).join("")
@@ -71,224 +72,84 @@ export async function pageResults() {
 }
 
 export async function pageTeam(slug) {
-  const data = await request(`/teams/${encodeURIComponent(slug)}`);
+  const data = await request(`/teams-lite/${encodeURIComponent(slug)}`);
   const t = data.team;
-  const form = data.form || {};
-  const mom = data.momentum || {};
+  const players = data.players || [];
+  const injuries = data.injuries || [];
 
   const header = `<div class="page-header team-header">
     ${teamBadgeHtml(t.name, data, "lg")}
     <div>
       <h2>${escapeHtml(t.name)}</h2>
       <div class="badges-row">
-        <span class="metric-badge">Momentum ${Math.round(mom.score ?? 0)}</span>
-        ${form.form_last_5 != null ? `<span class="metric-badge">L5 form ${formatPct(form.form_last_5)}</span>` : ""}
-        ${form.opponent_adjusted_form != null ? `<span class="metric-badge">Adj form ${formatPct(form.opponent_adjusted_form)}</span>` : ""}
-        ${regionalBadge(form)}
-        ${form.source ? `<span class="metric-badge">${escapeHtml(form.source)}</span>` : ""}
-        ${data.strength?.matches ? `<span class="metric-badge">${data.strength.matches} WC matches · atk ${data.strength.attack?.toFixed(2)}</span>` : ""}
+        <span class="metric-badge">${data.squad_count ?? players.length} squad players</span>
       </div>
     </div>
   </div>`;
 
-  const players = data.players || [];
-  const injuries = data.injuries || [];
+  const squadRows = players.map(
+    (p) => `<tr>
+      <td>${escapeHtml(p.name || "?")}</td>
+      <td>${escapeHtml(p.position || "—")}</td>
+      <td>${p.rating != null ? Math.round(p.rating) : "—"}</td>
+      <td>${p.injured ? "Injured" : "OK"}</td>
+    </tr>`
+  );
 
-  const venueCard = regionalVenueCard(form);
-
-  const formSection = section("Recent form", `<p class="section-note">World Cup matches are neutral-site — no traditional home advantage. Co-hosts and South American teams get a small Americas familiarity boost.</p>
-  <div class="form-grid form-grid--stats">
-    <div class="form-card"><span>L5 form</span><strong>${formatPct(form.form_last_5)}</strong></div>
-    <div class="form-card"><span>L10 form</span><strong>${formatPct(form.form_last_10)}</strong></div>
-    <div class="form-card"><span>Opp-adjusted</span><strong>${formatPct(form.opponent_adjusted_form)}</strong></div>
-    <div class="form-card"><span>Goals L5 avg</span><strong>${form.goals_scored_last_5 != null ? `${formatAvg(form.goals_scored_last_5)}–${formatAvg(form.goals_conceded_last_5)}` : "—"}</strong></div>
-    <div class="form-card"><span>Goals L10 avg</span><strong>${form.goals_scored_last_10 != null ? `${formatAvg(form.goals_scored_last_10)}–${formatAvg(form.goals_conceded_last_10)}` : "—"}</strong></div>
-    <div class="form-card"><span>Clean sheets L5</span><strong>${form.clean_sheets_last_5 ?? "—"}</strong></div>
-    ${venueCard}
-  </div>`);
-
-  const formatOvr = (p) => {
-    if (p.rating == null) return "—";
-    if (p.rating_scale === "api_match") return (p.rating * 10).toFixed(0);
-    return Math.round(p.rating);
-  };
-
-  const squadRows = players
-    .sort((a, b) => (b.rating || 0) - (a.rating || 0))
-    .map(
-      (p) => `<tr>
-        <td>${escapeHtml(p.name || "?")}</td>
-        <td>${escapeHtml(p.positions_detail || p.position || "—")}</td>
-        <td>${p.age ?? "—"}</td>
-        <td>${formatOvr(p)}</td>
-        <td>${p.potential != null ? Math.round(p.potential) : "—"}</td>
-        <td>${escapeHtml(p.preferred_foot || "—")}</td>
-        <td title="PAC ${p.stat_pace ?? "—"} · SHO ${p.stat_shooting ?? "—"} · PAS ${p.stat_passing ?? "—"} · DRI ${p.stat_dribbling ?? "—"} · DEF ${p.stat_defending ?? "—"} · PHY ${p.stat_physical ?? "—"}">${escapeHtml(p.club || "—")}</td>
-        <td>${p.injured ? '<span class="badge badge-injury">Injured</span>' : ""}</td>
-      </tr>`
-    );
-
-  const squadNote =
-    data.squad_source === "fc26"
-      ? `<p class="section-note">Top 30 squad ratings per nation from Kaggle FC 26. Nations with fewer players in the CSV are topped up from API-Football.</p>`
-      : "";
   const squadSection = section(
-    "Squad",
+    "Squad (top players)",
     players.length
-      ? squadNote + tableHtml(["Player", "Pos", "Age", "OVR", "POT", "Foot", "Club", "Status"], squadRows)
-      : `<p class="empty">Squad data not loaded yet — run the full pipeline from Monitor.</p>`
+      ? tableHtml(["Player", "Pos", "OVR", "Status"], squadRows)
+      : `<p class="empty">Squad not loaded — refresh from Monitor (admin).</p>`
   );
 
   const injSection = injuries.length
-    ? section("Injuries & suspensions", `<ul class="injury-list">${injuries
+    ? section("Injuries", `<ul class="injury-list">${injuries
         .map((i) => `<li>${escapeHtml(i.player_name)} — ${escapeHtml(i.reason || i.injury_type || "Out")}</li>`)
         .join("")}</ul>`)
     : "";
 
-  const hist = data.history;
-  const histSection = hist && Object.keys(hist).length
-    ? section("World Cup history", `<div class="form-grid">
-        <div class="form-card"><span>Appearances</span><strong>${hist.appearances ?? "—"}</strong></div>
-        <div class="form-card"><span>Best finish</span><strong>${escapeHtml(hist.best_finish || "—")}</strong></div>
-        <div class="form-card"><span>Total WC goals</span><strong>${hist.total_goals ?? "—"}</strong></div>
-      </div>`)
-    : "";
-
-  return disclaimerHtml(true) + header + formSection + squadSection + injSection + histSection;
+  return disclaimerHtml(true) + header + squadSection + injSection;
 }
 
 export async function pageMatch(id) {
-  const match = await request(`/matches/${id}`);
+  const match = await request(`/match-lite/${id}`);
   const pred = match.prediction;
-  const canvasId = `factor-${id}`;
-  const contribId = `contrib-${id}`;
 
   let html = disclaimerHtml(true) +
     `<div class="page-header"><a class="back-link" href="#/">← Back</a></div>` +
     matchCardHtml(match, { clickable: false });
 
   if (pred) {
-    const wdl = pred.home_win_prob != null
-      ? `<div class="outcome-mini">
-          <span>H ${(pred.home_win_prob * 100).toFixed(0)}%</span>
-          <span>D ${(pred.draw_prob * 100).toFixed(0)}%</span>
-          <span>A ${(pred.away_win_prob * 100).toFixed(0)}%</span>
-        </div>`
-      : "";
-    html += section("Prediction summary", `<div class="form-grid">
-      <div class="form-card"><span>Source</span><strong>${escapeHtml((pred.prediction_source_mode || "—").replace(/_/g, " "))}</strong></div>
-      <div class="form-card"><span>Confidence</span><strong>${pred.confidence_pct != null ? `${Math.round(pred.confidence_pct)}%` : "—"}</strong></div>
-      <div class="form-card"><span>Completeness</span><strong>${pred.data_completeness_pct != null ? `${Math.round(pred.data_completeness_pct)}%` : "—"}</strong></div>
-      <div class="form-card"><span>Model</span><strong>${escapeHtml(pred.model_version || "—")}</strong></div>
-    </div>${wdl}
-    ${pred.explanation_json?.fallback_reason ? `<p class="prob-note"><strong>Fallback:</strong> ${escapeHtml(pred.explanation_json.fallback_reason)}</p>` : ""}`);
-  }
-
-  if (pred?.lambda_home_mean != null) {
-    const lh = `${Number(pred.lambda_home_mean).toFixed(2)} ± ${Number(pred.lambda_home_std || 0).toFixed(2)}`;
-    const la = `${Number(pred.lambda_away_mean).toFixed(2)} ± ${Number(pred.lambda_away_std || 0).toFixed(2)}`;
-    html += section("Expected goals (λ)", `<div class="form-grid">
-      <div class="form-card"><span>${escapeHtml(match.home_team)} λ</span><strong>${lh}</strong></div>
-      <div class="form-card"><span>${escapeHtml(match.away_team)} λ</span><strong>${la}</strong></div>
-      <div class="form-card"><span>Prediction type</span><strong>${escapeHtml(pred.prediction_type || "prematch")}</strong></div>
-      ${pred.generated_at ? `<div class="form-card"><span>Last update</span><strong>${formatDateIsrael(pred.generated_at)}</strong></div>` : ""}
-    </div>`);
-  }
-
-  html += factorChartHtml(pred, canvasId);
-  html += featureContributionsChartHtml(pred, contribId);
-
-  const flags = pred?.completeness_flags;
-  const risks = [];
-  if (flags) {
-    if (!flags.has_squad_data) risks.push("Squad strength estimated from defaults");
-    if (!flags.has_recent_form_data) risks.push("Limited recent form history");
-    if (!flags.has_injury_data) risks.push("Injury data incomplete");
-    (flags.confidence_penalty_reasons || []).forEach((r) => risks.push(r));
-  }
-  if (pred?.model_agreement && String(pred.model_agreement).toLowerCase().includes("low")) {
-    risks.push("Low model agreement");
-  }
-  if (risks.length) {
-    html += section("Risk factors", `<ul class="factor-list">${[...new Set(risks)].map((r) =>
-      `<li class="factor-neg">− ${escapeHtml(r)}</li>`
-    ).join("")}</ul>`);
-  }
-
-  const liveProbId = `live-prob-${id}`;
-  try {
-    const livePts = await request(`/matches/${id}/live-probs`);
-    if (livePts.length) {
-      html += liveProbChartHtml(liveProbId);
-    }
-  } catch { /* optional */ }
-
-  try {
-    const hist = await request(`/matches/${id}/history`);
-    const bullets = hist.what_changed?.bullets || [];
-    if (bullets.length) {
-      html += section("What changed?", `<ul>${bullets.map((b) =>
-        `<li>${escapeHtml(b)}</li>`
-      ).join("")}</ul>`);
-    } else if (hist.what_changed?.reason) {
-      html += section("What changed?", `<p>${escapeHtml(hist.what_changed.reason)}</p>`);
-    }
-  } catch { /* optional */ }
-
-  const ej = pred?.explanation_json;
-  if (ej || pred?.explanation) {
-    const alts = (ej?.top_scorelines || pred?.top_scorelines)?.slice(0, 5) ?? [];
-    const pos = (ej?.positive_factors || []).map((f) => `<li class="factor-pos">+ ${escapeHtml(f)}</li>`).join("");
-    const neg = (ej?.negative_factors || []).map((f) => `<li class="factor-neg">− ${escapeHtml(f)}</li>`).join("");
-    const missing = (ej?.missing_data || []).map((f) => `<li>${escapeHtml(f)}</li>`).join("");
-    html += section("Why this pick?", `
-      ${ej?.predicted_score ? `<p class="pred-headline"><strong>${escapeHtml(ej.predicted_score)}</strong></p>` : ""}
-      ${ej?.probability_note ? `<p class="prob-note muted">${escapeHtml(ej.probability_note)}</p>` : `<p>${escapeHtml(pred.explanation || "")}</p>`}
-      ${alts.length ? `<div class="chips">${alts.map((s) =>
-        `<span class="chip">${s.home}–${s.away} · ${(s.probability * 100).toFixed(0)}%</span>`
-      ).join("")}</div>` : ""}
-      ${pos || neg ? `<ul class="factor-list">${pos}${neg}</ul>` : ""}
-      ${missing ? section("Missing data", `<ul>${missing}</ul>`) : ""}
-    `);
-  }
-
-  if (match.events?.length) {
-    html += section("Timeline", timelineHtml(match.events));
-  } else {
-    const events = await request(`/matches/${id}/timeline`).catch(() => []);
-    if (events.length) html += section("Timeline", timelineHtml(events));
-  }
-
-  html += section("Lineups", lineupsHtml(match.lineups));
-  html += section("Match stats", statsGridHtml(match.team_stats));
-
-  if (match.weather && Object.keys(match.weather).length) {
-    const w = match.weather;
-    html += section("Weather forecast", `<div class="form-grid">
-      <div class="form-card"><span>Temp</span><strong>${w.temperature_c ?? "—"}°C</strong></div>
-      <div class="form-card"><span>Humidity</span><strong>${w.humidity_pct ?? "—"}%</strong></div>
-      <div class="form-card"><span>Wind</span><strong>${w.wind_kmh ?? "—"} km/h</strong></div>
-      <div class="form-card"><span>Rain</span><strong>${w.precipitation_mm ?? "—"} mm</strong></div>
-    </div>`);
-  }
-
-  if (match.referee_name) {
-    html += section("Referee", `<p>${escapeHtml(match.referee_name)}</p>`);
+    const alts = (pred.top_scorelines || []).slice(0, 3);
+    html += section("Explanation", `
+      ${pred.baseline_notice ? `<p class="prob-note">${escapeHtml(pred.baseline_notice)}</p>` : ""}
+      <p>${escapeHtml(pred.explanation || "No explanation stored yet.")}</p>
+      ${alts.length ? `<p class="section-note">Top scorelines (exact-score probability — not outcome confidence):</p>
+        <div class="chips">${alts.map((s) =>
+          `<span class="chip">${s.home}–${s.away} · ${(s.probability * 100).toFixed(0)}%</span>`
+        ).join("")}</div>` : ""}
+      <div class="form-grid">
+        <div class="form-card"><span>Source</span><strong>${escapeHtml((pred.prediction_source_mode || "—").replace(/_/g, " "))}</strong></div>
+        <div class="form-card"><span>Prediction confidence</span><strong>${pred.confidence_pct != null ? `${Math.round(pred.confidence_pct)}%` : "—"}</strong></div>
+        ${pred.generated_at ? `<div class="form-card"><span>Last update</span><strong>${formatDateIsrael(pred.generated_at)}</strong></div>` : ""}
+      </div>`);
   }
 
   if (match.injuries?.length) {
     html += section("Injuries", `<ul>${match.injuries.map((i) =>
-      `<li>${escapeHtml(i.player_name)} (${escapeHtml(i.team)}) — ${escapeHtml(i.reason || "Out")}</li>`
+      `<li>${escapeHtml(i.player_name)} (${escapeHtml(i.team || "")}) — ${escapeHtml(i.reason || "Out")}</li>`
     ).join("")}</ul>`);
   }
 
-  setTimeout(() => {
-    renderFactorChart(canvasId, pred);
-    renderFeatureContributionsChart(contribId, pred);
-    request(`/matches/${id}/live-probs`)
-      .then((pts) => renderLiveProbChart(liveProbId, pts))
-      .catch(() => null);
-  }, 50);
+  if (match.lineups?.length) {
+    html += section("Lineups", lineupsHtml(match.lineups));
+  }
+
+  if (match.team_stats?.length) {
+    html += section("Match stats", statsGridHtml(match.team_stats));
+  }
+
   return html;
 }
 
