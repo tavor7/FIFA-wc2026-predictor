@@ -291,6 +291,15 @@ export function adminPanelHtml() {
   </div>`;
 }
 
+function formatDuration(seconds) {
+  if (seconds == null || Number.isNaN(seconds)) return "";
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem ? `${m}m ${rem}s` : `${m}m`;
+}
+
 export function progressBarHtml(id = "pipeline-progress") {
   return `<div id="${id}" class="progress-panel hidden" role="status" aria-live="polite">
     <div class="progress-header">
@@ -298,6 +307,10 @@ export function progressBarHtml(id = "pipeline-progress") {
       <span class="progress-pct">0%</span>
     </div>
     <div class="progress-track"><div class="progress-fill" style="width:0%"></div></div>
+    <div class="progress-meta">
+      <span class="progress-steps">Step 1 of 10</span>
+      <span class="progress-timing">Calculating…</span>
+    </div>
     <p class="progress-detail">Preparing…</p>
   </div>`;
 }
@@ -311,6 +324,10 @@ export function updateProgressBar(panelId, progress) {
       panel.querySelector(".progress-fill").style.width = "100%";
       panel.querySelector(".progress-pct").textContent = "100%";
       panel.querySelector(".progress-phase").textContent = "Complete";
+      panel.querySelector(".progress-steps").textContent = "All steps finished";
+      panel.querySelector(".progress-timing").textContent = progress.elapsed_seconds
+        ? `${formatDuration(progress.elapsed_seconds)} total`
+        : "";
       panel.querySelector(".progress-detail").textContent = "Refreshing page…";
       return;
     }
@@ -319,17 +336,37 @@ export function updateProgressBar(panelId, progress) {
   }
   panel.classList.remove("hidden");
   const pct = Math.round(progress.overall_progress_pct || 2);
+  const stepPct = Math.round(progress.step_progress_pct || 0);
   panel.querySelector(".progress-fill").style.width = `${pct}%`;
   panel.querySelector(".progress-pct").textContent = `${pct}%`;
-  panel.querySelector(".progress-phase").textContent =
-    progress.phase_label || progress.step_label || "Running pipeline";
-  const detail = progress.message || "";
-  const elapsed = progress.elapsed_seconds
-    ? ` · ${Math.round(progress.elapsed_seconds)}s elapsed`
-    : "";
-  panel.querySelector(".progress-detail").textContent = detail
-    ? `${detail}${elapsed}`
-    : `Working${elapsed}`;
+
+  const mode = progress.mode_label || "Pipeline";
+  const phase = progress.phase_label || progress.step_label || "Running";
+  panel.querySelector(".progress-phase").textContent = `${mode} · ${phase}`;
+
+  const stepNum = progress.step_number ?? 1;
+  const stepsTotal = progress.steps_total ?? progress.total_steps ?? 10;
+  const phaseStep = progress.phase_step_number ?? 1;
+  const phaseTotal = progress.phase_steps_total ?? 1;
+  const taskLabel = progress.step_label || phase;
+  panel.querySelector(".progress-steps").textContent =
+    `Step ${stepNum} of ${stepsTotal} · ${taskLabel} (${phaseStep}/${phaseTotal} in phase)` +
+    (stepPct > 0 && stepPct < 100 ? ` · ${stepPct}%` : "");
+
+  const timingParts = [];
+  const remaining = progress.estimated_remaining_seconds;
+  if (remaining != null && remaining > 0) {
+    timingParts.push(`~${formatDuration(remaining)} left`);
+  } else if (pct > 2 && pct < 99) {
+    timingParts.push("estimating…");
+  }
+  if (progress.elapsed_seconds) {
+    timingParts.push(`${formatDuration(progress.elapsed_seconds)} elapsed`);
+  }
+  panel.querySelector(".progress-timing").textContent = timingParts.join(" · ") || "";
+
+  const detail = (progress.message || "").replace(/…\s*\d+s\s*$/, "…").trim();
+  panel.querySelector(".progress-detail").textContent = detail || taskLabel;
 }
 
 export function freshnessBarHtml(data, pageMeta = {}) {

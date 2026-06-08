@@ -44,6 +44,20 @@ PHASE_GROUPS: list[tuple[str, list[int]]] = [
     ("Updating cache", [9]),
 ]
 
+PIPELINE_MODES: dict[str, list[int]] = {
+    "full_pipeline": list(range(10)),
+    "data_sync_only": [0, 1, 2, 3],
+    "features_only": [4, 5],
+    "predictions_only": [6, 7, 8, 9],
+}
+
+MODE_LABELS: dict[str, str] = {
+    "full_pipeline": "Full pipeline",
+    "data_sync_only": "Data sync",
+    "features_only": "Features",
+    "predictions_only": "Predictions",
+}
+
 
 def _phase_label_for_step(step_index: int) -> str:
     for label, indices in PHASE_GROUPS:
@@ -81,8 +95,22 @@ def compute_overall_pct(
     return round(min(99.0, max(2.0, overall)), 1)
 
 
+def active_steps_for_mode(mode: str) -> list[int]:
+    return PIPELINE_MODES.get(mode, list(range(len(PIPELINE_STEPS))))
+
+
+def estimate_remaining_seconds(elapsed: float, overall_pct: float) -> Optional[int]:
+    """ETA from elapsed time and overall % (linear extrapolation)."""
+    if overall_pct < 3 or elapsed < 8:
+        return None
+    if overall_pct >= 99.5:
+        return 0
+    return int(round(elapsed * (100.0 - overall_pct) / max(overall_pct, 0.1)))
+
+
 def start_pipeline_run(service_name: str, triggered_by: str = "scheduler") -> int:
     now = datetime.utcnow().isoformat()
+    active_count = len(active_steps_for_mode(service_name))
     with get_connection() as conn:
         if conn.__class__.__module__.startswith("psycopg"):
             row = conn.execute(
@@ -119,7 +147,7 @@ def start_pipeline_run(service_name: str, triggered_by: str = "scheduler") -> in
                 message=excluded.message,
                 updated_at=excluded.updated_at
             """,
-            (run_id, "A", len(PIPELINE_STEPS), now),
+            (run_id, "A", active_count, now),
         )
     return run_id
 
@@ -220,20 +248,46 @@ def get_active_pipeline_progress() -> Optional[dict[str, Any]]:
     phase = _phase_label_for_step(step_idx)
     step_key = d.get("current_step") or ""
     step_label = STEP_LABELS.get(step_key, phase)
+    service_name = d.get("service_name") or "full_pipeline"
+    active = active_steps_for_mode(service_name)
+    overall = float(d.get("overall_progress_pct") or 0)
+    step_progress = float(d.get("step_progress_pct") or 0)
+
+    step_number = active.index(step_idx) + 1 if step_idx in active else 1
+    steps_total = len(active) or int(d.get("total_steps") or len(PIPELINE_STEPS))
+
+    phase_step_number = 1
+    phase_steps_total = 1
+    for _plabel, indices in PHASE_GROUPS:
+        if step_idx in indices:
+            phase_active = [i for i in indices if i in active]
+            phase_steps_total = max(len(phase_active), 1)
+            phase_step_number = (
+                phase_active.index(step_idx) + 1 if step_idx in phase_active else 1
+            )
+            break
+
+    remaining = estimate_remaining_seconds(elapsed, overall)
 
     return {
         "running": True,
         "run_id": d["run_id"],
-        "service_name": d.get("service_name"),
+        "service_name": service_name,
+        "mode_label": MODE_LABELS.get(service_name, service_name.replace("_", " ")),
         "current_step": step_key,
         "step_index": step_idx,
-        "total_steps": d["total_steps"],
-        "step_progress_pct": d["step_progress_pct"],
-        "overall_progress_pct": d["overall_progress_pct"],
+        "total_steps": steps_total,
+        "step_number": step_number,
+        "steps_total": steps_total,
+        "phase_step_number": phase_step_number,
+        "phase_steps_total": phase_steps_total,
+        "step_progress_pct": step_progress,
+        "overall_progress_pct": overall,
         "phase_label": phase,
         "step_label": step_label,
         "message": d.get("message"),
         "elapsed_seconds": elapsed,
+        "estimated_remaining_seconds": remaining,
         "triggered_by": d.get("triggered_by"),
     }
 

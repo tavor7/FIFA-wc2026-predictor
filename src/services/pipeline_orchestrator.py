@@ -12,7 +12,7 @@ from typing import Any, Callable, Iterator, Optional
 from src import db
 from src import db_extended as ext
 from src import db_pipeline as pipe_db
-from src.db_pipeline import STEP_LABELS
+from src.db_pipeline import PIPELINE_MODES, STEP_LABELS
 from src.services.data_sync_service import DataSyncService
 from src.services.feature_generation_service import FeatureGenerationService
 from src.services.prediction_generation_service import PredictionGenerationService
@@ -24,14 +24,6 @@ logger = logging.getLogger(__name__)
 
 _active_run_id: Optional[int] = None
 _run_lock = threading.Lock()
-
-PIPELINE_MODES = {
-    "full_pipeline": list(range(10)),
-    "data_sync_only": [0, 1, 2, 3],
-    "features_only": [4, 5],
-    "predictions_only": [6, 7, 8, 9],
-}
-
 
 class PipelineOrchestrator:
     def __init__(self, fast: bool = True):
@@ -78,10 +70,7 @@ class PipelineOrchestrator:
                     tick += 1
                     elapsed = int(time.monotonic() - start)
                     fake_pct = min(88, 12 + tick * 8)
-                    progress(
-                        step_idx, step_key, fake_pct,
-                        f"{label}… {elapsed}s",
-                    )
+                    progress(step_idx, step_key, fake_pct, f"{label}…")
 
             progress(step_idx, step_key, 8, f"{label}…")
             t = threading.Thread(target=_tick, daemon=True)

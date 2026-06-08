@@ -1205,8 +1205,33 @@ main .card + .section {
   color: var(--accent);
 }
 
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.progress-steps {
+  color: var(--text);
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+
+.progress-timing {
+  color: var(--accent);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .progress-detail {
-  margin: 0.55rem 0 0;
+  margin: 0.35rem 0 0;
   font-size: 0.78rem;
   color: var(--muted);
   line-height: 1.4;
