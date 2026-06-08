@@ -99,7 +99,24 @@ export async function request(path, options = {}) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API}${path}`, { ...options, headers });
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(`${API}${path}`, {
+      ...options,
+      headers,
+      signal: options.signal ?? controller.signal,
+    });
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      throw new Error("Request timed out — the database may be busy (pipeline sync on Render?). Try again shortly.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
   lastResponseMeta = {
     cache: res.headers.get("X-Cache"),
     responseTimeMs: res.headers.get("X-Response-Time-ms"),

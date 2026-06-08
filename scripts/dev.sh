@@ -35,6 +35,10 @@ set +a
 
 export PORT="${PORT:-8000}"
 export GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo local)}"
+# Local dev: skip background seed + DB metric writes unless explicitly enabled in .env
+export STARTUP_SEED="${STARTUP_SEED:-false}"
+export PERSIST_OBSERVABILITY="${PERSIST_OBSERVABILITY:-false}"
+export ENABLE_SCHEDULER="${ENABLE_SCHEDULER:-false}"
 
 if [[ "${LOCAL_USE_SQLITE:-}" == "1" ]]; then
   export DATABASE_URL=
@@ -56,7 +60,8 @@ if lsof -i ":${PORT}" -t >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Scheduler: ${ENABLE_SCHEDULER:-false}  |  Startup seed: ${STARTUP_SEED:-true}"
+echo "Scheduler: ${ENABLE_SCHEDULER}  |  Startup seed: ${STARTUP_SEED}  |  DB metrics: ${PERSIST_OBSERVABILITY}"
+echo "Tip: if pages are slow, a pipeline may be running on Render (shared Supabase). Check Monitor → Cancel."
 echo "API:  http://127.0.0.1:${PORT}"
 echo "UI:   http://127.0.0.1:${PORT}/#/monitor"
 echo "Stop: Ctrl+C"

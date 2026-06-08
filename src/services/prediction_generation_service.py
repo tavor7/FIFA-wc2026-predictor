@@ -284,6 +284,7 @@ class PredictionGenerationService:
         *,
         run_simulation: bool = True,
         only_missing: bool = False,
+        should_cancel: Optional[Callable[[], bool]] = None,
     ) -> dict[str, Any]:
         db.init_db()
         upcoming = db.get_upcoming_matches(limit=limit, tournament_only=True)
@@ -310,6 +311,8 @@ class PredictionGenerationService:
             }
 
         for i, match in enumerate(upcoming):
+            if should_cancel and should_cancel():
+                break
             try:
                 pred = self.predict_match(match)
                 db.upsert_prediction(**self._upsert_kwargs(pred))

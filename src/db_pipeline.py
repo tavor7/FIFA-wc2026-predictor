@@ -215,7 +215,7 @@ def finish_pipeline_run(
             """,
             (now, status, records_read, records_written, records_failed, duration, error_message, run_id),
         )
-        if status in ("success", "failed", "partial"):
+        if status in ("success", "failed", "partial", "cancelled"):
             _execute(conn, "DELETE FROM pipeline_progress WHERE run_id = ?", (run_id,))
 
 
@@ -271,6 +271,7 @@ def get_active_pipeline_progress() -> Optional[dict[str, Any]]:
 
     return {
         "running": True,
+        "cancellable": True,
         "run_id": d["run_id"],
         "service_name": service_name,
         "mode_label": MODE_LABELS.get(service_name, service_name.replace("_", " ")),

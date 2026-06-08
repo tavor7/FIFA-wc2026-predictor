@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import os
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Any, Iterator, Optional
@@ -12,6 +13,8 @@ from src import db
 from src.db import _execute, get_connection
 
 logger = logging.getLogger(__name__)
+
+PERSIST_OBSERVABILITY = os.getenv("PERSIST_OBSERVABILITY", "false").lower() in ("1", "true", "yes")
 
 SLOW_API_MS = 1000
 METRICS_RETENTION_DAYS = 7
@@ -51,6 +54,8 @@ def record_api_metric(
     cache_hit: bool,
     payload_bytes: int,
 ) -> None:
+    if not PERSIST_OBSERVABILITY:
+        return
     slow = 1 if total_ms >= SLOW_API_MS else 0
     now = datetime.utcnow().isoformat()
     try:
@@ -74,6 +79,8 @@ def record_api_metric(
 
 
 def record_slow_query(duration_ms: float, sql: str) -> None:
+    if not PERSIST_OBSERVABILITY:
+        return
     fingerprint = " ".join(sql.strip().split()[:6])
     path = get_request_path() or ""
     now = datetime.utcnow().isoformat()

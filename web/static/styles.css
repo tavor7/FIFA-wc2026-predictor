@@ -1192,6 +1192,45 @@ main .card + .section {
   margin-bottom: 0.55rem;
 }
 
+.progress-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-shrink: 0;
+}
+
+.btn-pipeline-cancel {
+  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  border-color: rgba(252, 165, 165, 0.35);
+  color: #fca5a5;
+}
+
+.btn-pipeline-cancel:hover:not(:disabled) {
+  border-color: rgba(252, 165, 165, 0.55);
+  color: #fecaca;
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.progress-panel.progress-cancelling {
+  border-color: rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.06);
+}
+
+.progress-panel.progress-cancelling .progress-pct {
+  color: #fcd34d;
+}
+
+.progress-panel.progress-cancelled {
+  border-color: rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.06);
+}
+
+.progress-panel.progress-cancelled .progress-pct {
+  color: #fcd34d;
+}
+
 .progress-phase {
   font-size: 0.9rem;
   font-weight: 700;

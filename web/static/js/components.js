@@ -342,7 +342,10 @@ export function progressBarHtml(id = "pipeline-progress") {
   return `<div id="${id}" class="progress-panel hidden" role="status" aria-live="polite">
     <div class="progress-header">
       <span class="progress-phase">Starting pipeline…</span>
-      <span class="progress-pct">0%</span>
+      <div class="progress-header-actions">
+        <span class="progress-pct">0%</span>
+        <button type="button" id="btn-pipeline-cancel" class="btn-ghost btn-pipeline-cancel hidden" aria-label="Cancel pipeline run">Cancel</button>
+      </div>
     </div>
     <div class="progress-track"><div class="progress-fill" style="width:0%"></div></div>
     <div class="progress-meta">
@@ -356,9 +359,25 @@ export function progressBarHtml(id = "pipeline-progress") {
 export function updateProgressBar(panelId, progress) {
   const panel = document.getElementById(panelId);
   if (!panel) return;
+  const cancelBtn = panel.querySelector("#btn-pipeline-cancel");
   if (!progress?.running) {
+    if (progress?.cancelled) {
+      panel.classList.remove("hidden", "progress-cancelling");
+      panel.classList.add("progress-cancelled");
+      panel.querySelector(".progress-fill").style.width = `${Math.round(progress.overall_progress_pct || 0)}%`;
+      panel.querySelector(".progress-pct").textContent = "Stopped";
+      panel.querySelector(".progress-phase").textContent = "Pipeline cancelled";
+      panel.querySelector(".progress-steps").textContent = "Run stopped by user";
+      panel.querySelector(".progress-timing").textContent = progress.elapsed_seconds
+        ? `${formatDuration(progress.elapsed_seconds)} elapsed`
+        : "";
+      panel.querySelector(".progress-detail").textContent =
+        progress.message || "Cancelled after the current step finished.";
+      if (cancelBtn) cancelBtn.classList.add("hidden");
+      return;
+    }
     if (progress?.overall_progress_pct >= 100) {
-      panel.classList.remove("hidden");
+      panel.classList.remove("hidden", "progress-cancelling", "progress-cancelled");
       panel.querySelector(".progress-fill").style.width = "100%";
       panel.querySelector(".progress-pct").textContent = "100%";
       panel.querySelector(".progress-phase").textContent = "Complete";
@@ -367,12 +386,26 @@ export function updateProgressBar(panelId, progress) {
         ? `${formatDuration(progress.elapsed_seconds)} total`
         : "";
       panel.querySelector(".progress-detail").textContent = "Refreshing page…";
+      if (cancelBtn) cancelBtn.classList.add("hidden");
       return;
     }
     panel.classList.add("hidden");
+    panel.classList.remove("progress-cancelling", "progress-cancelled");
+    if (cancelBtn) cancelBtn.classList.add("hidden");
     return;
   }
-  panel.classList.remove("hidden");
+  panel.classList.remove("hidden", "progress-cancelled");
+  if (progress.cancel_requested) {
+    panel.classList.add("progress-cancelling");
+  } else {
+    panel.classList.remove("progress-cancelling");
+  }
+  if (cancelBtn) {
+    const showCancel = progress.cancellable && !progress.cancel_requested;
+    cancelBtn.classList.toggle("hidden", !showCancel);
+    cancelBtn.disabled = !!progress.cancel_requested;
+    cancelBtn.textContent = progress.cancel_requested ? "Cancelling…" : "Cancel";
+  }
   const pct = Math.round(progress.overall_progress_pct || 2);
   const stepPct = Math.round(progress.step_progress_pct || 0);
   panel.querySelector(".progress-fill").style.width = `${pct}%`;

@@ -41,8 +41,8 @@ def _postgres_pool() -> Any:
 
         _pg_pool = ConnectionPool(
             conninfo=_normalize_db_url(config.DATABASE_URL),
-            min_size=1,
-            max_size=6,
+            min_size=2,
+            max_size=10,
             kwargs={"row_factory": dict_row},
             open=True,
         )

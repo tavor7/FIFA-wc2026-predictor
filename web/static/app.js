@@ -103,7 +103,7 @@ async function navigate() {
   activeRoute = name;
   setActiveNav(name === "team" || name === "match" ? "matches" : name);
   showError(null);
-  loading?.classList.add("hidden");
+  loading?.classList.remove("hidden");
   content.innerHTML = skeletonCardsHtml(name === "monitor" ? 2 : 4);
   try {
     const html = await handler(match);
@@ -111,7 +111,10 @@ async function navigate() {
     void updateFreshnessBar();
   } catch (e) {
     showError(e.message || "Failed to load page");
-    content.innerHTML = "";
+    content.innerHTML =
+      `<p class="empty">Could not load this page. If a data sync is running on Render, wait a minute or open <a href="#/monitor">Monitor</a> to cancel it.</p>`;
+  } finally {
+    loading?.classList.add("hidden");
   }
 }
 
@@ -203,8 +206,34 @@ async function adminRefreshPredictions() {
   }
 }
 
+let pipelineCancelRequested = false;
+
+async function adminCancelPipeline() {
+  if (!(await ensureAdminAuth())) return;
+  const btn = document.getElementById("btn-pipeline-cancel");
+  if (btn?.disabled) return;
+  if (btn) btn.disabled = true;
+  try {
+    const { updateProgressBar } = await import("./js/components.js");
+    await request("/admin/pipeline/cancel", { method: "POST" });
+    pipelineCancelRequested = true;
+    updateProgressBar("pipeline-progress", {
+      running: true,
+      cancellable: true,
+      cancel_requested: true,
+      overall_progress_pct: 0,
+      message: "Cancelling after current step…",
+    });
+  } catch (e) {
+    pipelineCancelRequested = false;
+    if (btn) btn.disabled = false;
+    showError(e.message || "Could not cancel pipeline");
+  }
+}
+
 async function adminRunPipeline(mode) {
   if (!(await ensureAdminAuth())) return;
+  pipelineCancelRequested = false;
   const { updateProgressBar } = await import("./js/components.js");
   const panel = document.getElementById("pipeline-progress");
   if (panel) panel.classList.remove("hidden");
@@ -228,7 +257,16 @@ async function adminRunPipeline(mode) {
       });
     }
     const result = await pollPipelineProgress((p) => updateProgressBar("pipeline-progress", p));
-    if (result?.error) {
+    if (pipelineCancelRequested && !result?.running) {
+      updateProgressBar("pipeline-progress", {
+        running: false,
+        cancelled: true,
+        overall_progress_pct: result?.overall_progress_pct ?? 0,
+        elapsed_seconds: result?.elapsed_seconds,
+        message: "Pipeline run was cancelled.",
+      });
+      pipelineCancelRequested = false;
+    } else if (result?.error) {
       showError(`Pipeline polling lost connection: ${result.error}`);
     } else if (activeRoute === "monitor") {
       await navigate();
@@ -253,6 +291,10 @@ document.addEventListener("click", (e) => {
   if (pipeBtn) {
     e.preventDefault();
     adminRunPipeline(pipeBtn.dataset.pipelineMode);
+  }
+  if (e.target.closest("#btn-pipeline-cancel")) {
+    e.preventDefault();
+    adminCancelPipeline();
   }
   if (e.target.closest("#btn-repair-predictions")) {
     e.preventDefault();
@@ -300,9 +342,19 @@ async function resumePipelineProgressIfRunning() {
     const { updateProgressBar } = await import("./js/components.js");
     const data = await request("/admin/pipeline/progress", { noCache: true });
     if (data?.running) {
+      pipelineCancelRequested = !!data.cancel_requested;
       updateProgressBar("pipeline-progress", data);
-      await pollPipelineProgress((p) => updateProgressBar("pipeline-progress", p));
-      if (activeRoute === "monitor") await navigate();
+      const result = await pollPipelineProgress((p) => updateProgressBar("pipeline-progress", p));
+      if (pipelineCancelRequested && !result?.running) {
+        updateProgressBar("pipeline-progress", {
+          running: false,
+          cancelled: true,
+          overall_progress_pct: result?.overall_progress_pct ?? data.overall_progress_pct ?? 0,
+          elapsed_seconds: result?.elapsed_seconds ?? data.elapsed_seconds,
+          message: "Pipeline run was cancelled.",
+        });
+        pipelineCancelRequested = false;
+      } else if (activeRoute === "monitor") await navigate();
     }
   } catch {
     /* ignore */
@@ -310,4 +362,5 @@ async function resumePipelineProgressIfRunning() {
 }
 
 navigate();
-resumePipelineProgressIfRunning();
+// Let the main page fetch first — pipeline polling competes for the shared DB pool.
+setTimeout(() => resumePipelineProgressIfRunning(), 2500);

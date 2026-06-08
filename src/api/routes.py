@@ -518,7 +518,22 @@ def admin_repair_predictions(_auth: None = Depends(require_admin)) -> dict[str, 
 
 @router.get("/admin/pipeline/progress")
 def admin_pipeline_progress() -> dict[str, Any]:
-    return pipe_db.get_active_pipeline_progress()
+    from src.services.pipeline_orchestrator import is_cancel_requested
+
+    progress = pipe_db.get_active_pipeline_progress()
+    run_id = progress.get("run_id")
+    if progress.get("running") and run_id is not None and is_cancel_requested(int(run_id)):
+        progress["cancel_requested"] = True
+    return progress
+
+
+@router.post("/admin/pipeline/cancel")
+def admin_pipeline_cancel(
+    _auth: None = Depends(require_admin),
+) -> dict[str, Any]:
+    from src.services.pipeline_orchestrator import request_pipeline_cancel
+
+    return request_pipeline_cancel()
 
 
 @router.get("/admin/pipeline/plan")
