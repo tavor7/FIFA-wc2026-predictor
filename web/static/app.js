@@ -106,12 +106,27 @@ async function navigate() {
   activeRoute = name;
   setActiveNav(name === "team" || name === "match" ? "matches" : name);
   showError(null);
+
+  if (name === "monitor") {
+    if (!(await ensureAdminAuth())) {
+      loading?.classList.add("hidden");
+      content.innerHTML = "";
+      if (location.hash.includes("monitor")) {
+        location.hash = "#/";
+      }
+      return;
+    }
+  }
+
   loading?.classList.remove("hidden");
   content.innerHTML = skeletonCardsHtml(name === "monitor" ? 2 : 4);
   try {
     const html = await handler(match);
     content.innerHTML = html;
     void updateFreshnessBar();
+    if (name === "monitor") {
+      void resumePipelineProgressIfRunning();
+    }
   } catch (e) {
     showError(e.message || "Failed to load page");
     content.innerHTML =
@@ -170,7 +185,6 @@ async function ensureAdminAuth() {
 }
 
 async function adminReloadPlayers() {
-  if (!(await ensureAdminAuth())) return;
   const btn = document.querySelector("#btn-admin-players");
   if (btn) {
     btn.disabled = true;
@@ -190,7 +204,6 @@ async function adminReloadPlayers() {
 }
 
 async function adminRefreshPredictions() {
-  if (!(await ensureAdminAuth())) return;
   const btn = document.querySelector("#btn-admin-predict");
   if (btn) {
     btn.disabled = true;
@@ -212,7 +225,6 @@ async function adminRefreshPredictions() {
 let pipelineCancelRequested = false;
 
 async function adminCancelPipeline() {
-  if (!(await ensureAdminAuth())) return;
   const btn = document.getElementById("btn-pipeline-cancel");
   if (btn?.disabled) return;
   if (btn) btn.disabled = true;
@@ -235,7 +247,6 @@ async function adminCancelPipeline() {
 }
 
 async function adminRunPipeline(mode) {
-  if (!(await ensureAdminAuth())) return;
   pipelineCancelRequested = false;
   const { updateProgressBar } = await import("./js/components.js");
   const panel = document.getElementById("pipeline-progress");
@@ -311,7 +322,6 @@ document.addEventListener("click", (e) => {
 });
 
 async function adminRepairPredictions() {
-  if (!(await ensureAdminAuth())) return;
   const btn = document.querySelector("#btn-repair-predictions");
   if (btn) {
     btn.disabled = true;
@@ -345,6 +355,7 @@ nav?.addEventListener("click", (e) => {
 });
 
 async function resumePipelineProgressIfRunning() {
+  if (activeRoute !== "monitor" || !(await verifyAdminSession())) return;
   try {
     const { pollPipelineProgress } = await import("./js/api.js");
     const { updateProgressBar } = await import("./js/components.js");
@@ -370,5 +381,3 @@ async function resumePipelineProgressIfRunning() {
 }
 
 navigate();
-// Let the main page fetch first — pipeline polling competes for the shared DB pool.
-setTimeout(() => resumePipelineProgressIfRunning(), 2500);
