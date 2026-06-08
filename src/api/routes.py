@@ -432,15 +432,38 @@ def admin_pipeline_progress() -> dict[str, Any]:
     return pipe_db.get_active_pipeline_progress()
 
 
-@router.post("/admin/pipeline/run")
-def admin_pipeline_run(
+@router.get("/admin/pipeline/plan")
+def admin_pipeline_plan(
     mode: str = "full_pipeline",
     _auth: None = Depends(require_admin),
 ) -> dict[str, Any]:
     if mode not in ("full_pipeline", "data_sync_only", "features_only", "predictions_only"):
         raise HTTPException(status_code=400, detail="Invalid pipeline mode")
-    run_id = run_pipeline_async(mode=mode, triggered_by="admin")
-    return {"status": "started", "run_id": run_id, "mode": mode, "fast": True}
+    from src.services.pipeline_planner import plan_pipeline_steps
+
+    return plan_pipeline_steps(mode, fast=True)
+
+
+@router.post("/admin/pipeline/run")
+def admin_pipeline_run(
+    mode: str = "full_pipeline",
+    force: bool = False,
+    _auth: None = Depends(require_admin),
+) -> dict[str, Any]:
+    if mode not in ("full_pipeline", "data_sync_only", "features_only", "predictions_only"):
+        raise HTTPException(status_code=400, detail="Invalid pipeline mode")
+    from src.services.pipeline_planner import plan_pipeline_steps
+
+    plan = plan_pipeline_steps(mode, fast=True) if not force else {"force_all_steps": True}
+    run_id = run_pipeline_async(mode=mode, triggered_by="admin", skip_completed=not force)
+    return {
+        "status": "started",
+        "run_id": run_id,
+        "mode": mode,
+        "fast": True,
+        "skip_completed": not force,
+        "plan": plan,
+    }
 
 
 def _data_feed_hints(keys: dict[str, Any], counts: dict[str, int]) -> list[str]:

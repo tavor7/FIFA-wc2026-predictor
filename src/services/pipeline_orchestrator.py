@@ -17,6 +17,7 @@ from src.services.data_sync_service import DataSyncService
 from src.services.feature_generation_service import FeatureGenerationService
 from src.services.prediction_generation_service import PredictionGenerationService
 from src.services.prediction_validation_service import validate_prediction
+from src.services.pipeline_planner import apply_skipped_progress, plan_pipeline_steps
 from src.services.ui_cache_service import UICacheService
 from src.cache.response_cache import invalidate_all
 
@@ -38,6 +39,8 @@ class PipelineOrchestrator:
         mode: str = "full_pipeline",
         triggered_by: str = "scheduler",
         run_id: Optional[int] = None,
+        *,
+        skip_completed: bool = True,
     ) -> dict[str, Any]:
         global _active_run_id
         if run_id is None:
@@ -49,6 +52,20 @@ class PipelineOrchestrator:
 
         started = datetime.utcnow().isoformat()
         step_indices = PIPELINE_MODES.get(mode, PIPELINE_MODES["full_pipeline"])
+        plan = (
+            plan_pipeline_steps(mode, fast=self.fast)
+            if skip_completed
+            else {
+                "mode": mode,
+                "all_steps": step_indices,
+                "steps_to_run": list(step_indices),
+                "steps_skipped": {},
+                "skip_count": 0,
+                "run_count": len(step_indices),
+                "nothing_to_do": False,
+            }
+        )
+        steps_to_run = set(plan["steps_to_run"])
         records_read = records_written = records_failed = 0
         error_message = None
         status = "success"
@@ -82,36 +99,61 @@ class PipelineOrchestrator:
                 t.join(timeout=1)
 
         try:
-            if 0 in step_indices:
-                removed = ext.prune_non_tournament_teams()
-                if removed:
-                    logger.info("Pruned %d non-tournament teams", removed)
+            apply_skipped_progress(run_id, plan, step_indices)
+            logger.info(
+                "Pipeline %s: running %d/%d steps (skipped %d)",
+                mode,
+                plan["run_count"],
+                len(step_indices),
+                plan["skip_count"],
+            )
 
-            if 0 in step_indices:
+            if plan["nothing_to_do"]:
+                progress(
+                    step_indices[-1],
+                    PIPELINE_STEPS[step_indices[-1]][0],
+                    100,
+                    "All steps up to date — nothing to run",
+                )
+            elif steps_to_run:
+                first = min(steps_to_run)
+                progress(
+                    first,
+                    PIPELINE_STEPS[first][0],
+                    5,
+                    f"Running {plan['run_count']} of {len(step_indices)} steps "
+                    f"({plan['skip_count']} already done)",
+                )
+
+            removed = ext.prune_non_tournament_teams()
+            if removed:
+                logger.info("Pruned %d non-tournament teams", removed)
+
+            if 0 in steps_to_run:
                 with heartbeat(0, "A", STEP_LABELS["A"]):
                     r = self.sync.sync_fixtures()
                 records_written += r.get("updated", 0) or r.get("total_synced", 0)
                 progress(0, "A", 100, "Fixtures synced")
 
-            if 1 in step_indices:
+            if 1 in steps_to_run:
                 with heartbeat(1, "B", STEP_LABELS["B"]):
                     r = self.sync.sync_team_stats()
                 records_written += r.get("updated", 0) or 0
                 progress(1, "B", 100, "Teams synced")
 
-            if 2 in step_indices:
+            if 2 in steps_to_run:
                 with heartbeat(2, "C", STEP_LABELS["C"]):
                     r = self.sync.sync_injuries()
                 records_written += r.get("updated", 0) or 0
                 progress(2, "C", 100, "Injuries synced")
 
-            if 3 in step_indices:
+            if 3 in steps_to_run:
                 with heartbeat(3, "D", STEP_LABELS["D"]):
                     r = self.sync.sync_live()
                 records_written += r.get("updated", 0) or 0
                 progress(3, "D", 100, "Live data synced")
 
-            if 4 in step_indices:
+            if 4 in steps_to_run:
                 if self.fast and mode == "full_pipeline":
                     progress(4, "E", 100, "Features built during prediction step")
                 else:
@@ -129,11 +171,11 @@ class PipelineOrchestrator:
                             progress(4, "E", pct, f"Features {i + 1}/{len(matches)}")
                     progress(4, "E", 100, f"Features for {records_written} matches")
 
-            if 5 in step_indices:
+            if 5 in steps_to_run:
                 progress(5, "F", 50, "Validating features...")
                 progress(5, "F", 100, "Feature validation complete")
 
-            if 6 in step_indices:
+            if 6 in steps_to_run:
                 progress(6, "G", 0, "Generating predictions...")
                 matches = self._all_target_matches()
                 total = len(matches)
@@ -145,13 +187,18 @@ class PipelineOrchestrator:
                 result = self.predictions.generate_all(
                     limit=500,
                     progress_callback=pred_progress,
-                    run_simulation=not self.fast,
+                    run_simulation=not self.fast and not skip_completed,
+                    only_missing=skip_completed,
                 )
                 records_written += result.get("generated", 0)
                 records_failed += result.get("errors", 0)
-                progress(6, "G", 100, f"Generated {result.get('generated', 0)} predictions")
+                n_gen = result.get("generated", 0)
+                progress(
+                    6, "G", 100,
+                    f"Generated {n_gen} predictions" if n_gen else "Predictions already complete",
+                )
 
-            if 7 in step_indices:
+            if 7 in steps_to_run:
                 progress(7, "H", 0, "Validating predictions...")
                 invalid = 0
                 import json
@@ -167,10 +214,10 @@ class PipelineOrchestrator:
                         invalid += 1
                 progress(7, "H", 100, f"Validation done ({invalid} invalid)")
 
-            if 8 in step_indices:
+            if 8 in steps_to_run:
                 progress(8, "I", 100, "Explanations embedded in predictions")
 
-            if 9 in step_indices:
+            if 9 in steps_to_run:
                 progress(9, "J", 0, "Refreshing UI cache...")
 
                 def cache_progress(pct: float, msg: str) -> None:
@@ -211,6 +258,7 @@ class PipelineOrchestrator:
             "records_written": records_written,
             "records_failed": records_failed,
             "error": error_message,
+            "plan": plan,
         }
 
     @staticmethod
@@ -224,7 +272,12 @@ class PipelineOrchestrator:
         return upcoming
 
 
-def run_pipeline_async(mode: str, triggered_by: str = "admin") -> int:
+def run_pipeline_async(
+    mode: str,
+    triggered_by: str = "admin",
+    *,
+    skip_completed: bool = True,
+) -> int:
     """Start pipeline in background thread; return run_id immediately."""
     global _active_run_id
 
@@ -239,7 +292,10 @@ def run_pipeline_async(mode: str, triggered_by: str = "admin") -> int:
     def _worker():
         try:
             PipelineOrchestrator(fast=fast).run(
-                mode=mode, triggered_by=triggered_by, run_id=run_id
+                mode=mode,
+                triggered_by=triggered_by,
+                run_id=run_id,
+                skip_completed=skip_completed,
             )
         finally:
             global _active_run_id

@@ -33,7 +33,46 @@ def upsert_team(
     api_team_id: Optional[int] = None,
     logo_url: Optional[str] = None,
 ) -> int:
+    """Upsert team by name; reuse row when api_team_id already belongs to another alias."""
     now = _now()
+    if api_team_id is not None:
+        holder = get_team_by_api_id(int(api_team_id))
+        if holder:
+            hid = int(holder["id"])
+            with get_connection() as conn:
+                _execute(
+                    conn,
+                    """
+                    UPDATE teams SET
+                        slug=COALESCE(?, slug),
+                        country_code=COALESCE(?, country_code),
+                        logo_url=COALESCE(?, logo_url),
+                        last_updated=?
+                    WHERE id=?
+                    """,
+                    (slug, country_code, logo_url, now, hid),
+                )
+            return hid
+
+    existing = resolve_team(name)
+    if existing:
+        eid = int(existing["id"])
+        with get_connection() as conn:
+            _execute(
+                conn,
+                """
+                UPDATE teams SET
+                    slug=COALESCE(?, slug),
+                    country_code=COALESCE(?, country_code),
+                    api_team_id=COALESCE(?, api_team_id),
+                    logo_url=COALESCE(?, logo_url),
+                    last_updated=?
+                WHERE id=?
+                """,
+                (slug, country_code, api_team_id, logo_url, now, eid),
+            )
+        return eid
+
     with get_connection() as conn:
         _execute(
             conn,

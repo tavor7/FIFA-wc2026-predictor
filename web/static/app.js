@@ -201,7 +201,24 @@ async function adminRunPipeline(mode) {
   const panel = document.getElementById("pipeline-progress");
   if (panel) panel.classList.remove("hidden");
   try {
-    await request(`/admin/pipeline/run?mode=${encodeURIComponent(mode)}`, { method: "POST" });
+    const start = await request(
+      `/admin/pipeline/run?mode=${encodeURIComponent(mode)}`,
+      { method: "POST" }
+    );
+    if (start?.plan?.skip_count > 0) {
+      const skipped = Object.values(start.plan.steps_skipped || {})
+        .map((s) => s.label)
+        .join(", ");
+      updateProgressBar("pipeline-progress", {
+        running: true,
+        overall_progress_pct: 2,
+        phase_label: "Planning",
+        step_label: "Pipeline",
+        message: `Skipping ${start.plan.skip_count} done step(s)${skipped ? `: ${skipped}` : ""}`,
+        step_number: 1,
+        steps_total: start.plan.run_count + start.plan.skip_count,
+      });
+    }
     const result = await pollPipelineProgress((p) => updateProgressBar("pipeline-progress", p));
     if (result?.error) {
       showError(`Pipeline polling lost connection: ${result.error}`);

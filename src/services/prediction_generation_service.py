@@ -263,6 +263,7 @@ class PredictionGenerationService:
         progress_callback: Optional[Callable[[int, int], None]] = None,
         *,
         run_simulation: bool = True,
+        only_missing: bool = False,
     ) -> dict[str, Any]:
         db.init_db()
         upcoming = db.get_upcoming_matches(limit=limit, tournament_only=True)
@@ -273,8 +274,21 @@ class PredictionGenerationService:
                 upcoming.append(m)
                 seen.add(int(m["id"]))
 
+        if only_missing and upcoming:
+            have = set(db.get_predictions_for_match_ids([int(m["id"]) for m in upcoming]).keys())
+            upcoming = [m for m in upcoming if int(m["id"]) not in have]
+
         total = len(upcoming)
-        generated = errors = 0
+        generated = errors = skipped = 0
+        if total == 0:
+            return {
+                "matches": 0,
+                "generated": 0,
+                "errors": 0,
+                "skipped": 0,
+                "tournament_simulation": None,
+            }
+
         for i, match in enumerate(upcoming):
             try:
                 pred = self.predict_match(match)
@@ -310,6 +324,7 @@ class PredictionGenerationService:
             "matches": total,
             "generated": generated,
             "errors": errors,
+            "skipped": skipped,
             "tournament_simulation": sim_result.to_dict() if sim_result else None,
         }
 
