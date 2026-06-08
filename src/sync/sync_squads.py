@@ -80,6 +80,7 @@ def sync_squads(
     season: Optional[int] = None,
     *,
     fill_thin_squads: bool = False,
+    thin_teams_only: bool = False,
 ) -> dict[str, Any]:
     """Fetch squad data for WC 2026 teams and fill gaps where Kaggle FC26 data is thin."""
     client = client or APIClient()
@@ -97,10 +98,11 @@ def sync_squads(
         try:
             internal_team_id = dbx.upsert_team(team_name, api_team_id=api_team_id)
             fc26_count = dbx.count_fc26_players_for_team(internal_team_id)
-            if fc26_count >= FULL_SQUAD_SIZE:
-                teams_skipped += 1
-                continue
-            if not fill_thin_squads and fc26_count >= 15:
+            if thin_teams_only or fill_thin_squads:
+                if fc26_count >= FULL_SQUAD_SIZE:
+                    teams_skipped += 1
+                    continue
+            elif fc26_count >= 15:
                 teams_skipped += 1
                 continue
             raw_players = client.get_players(api_team_id, season=season)

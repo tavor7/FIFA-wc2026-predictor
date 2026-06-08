@@ -261,6 +261,8 @@ class PredictionGenerationService:
         self,
         limit: int = 500,
         progress_callback: Optional[Callable[[int, int], None]] = None,
+        *,
+        run_simulation: bool = True,
     ) -> dict[str, Any]:
         db.init_db()
         upcoming = db.get_upcoming_matches(limit=limit, tournament_only=True)
@@ -294,7 +296,7 @@ class PredictionGenerationService:
                 progress_callback(i + 1, total)
 
         sim_result = None
-        if generated > 0:
+        if run_simulation and generated > 0:
             try:
                 sim_result = TournamentSimulator(elo=self.ensemble.elo).run(n_simulations=2000, store=True)
             except Exception as exc:

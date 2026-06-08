@@ -18,6 +18,7 @@ from src.services.feature_generation_service import FeatureGenerationService
 from src.services.prediction_generation_service import PredictionGenerationService
 from src.services.prediction_validation_service import validate_prediction
 from src.services.ui_cache_service import UICacheService
+from src.cache.response_cache import invalidate_all
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +34,9 @@ PIPELINE_MODES = {
 
 
 class PipelineOrchestrator:
-    def __init__(self):
-        self.sync = DataSyncService()
+    def __init__(self, fast: bool = True):
+        self.fast = fast
+        self.sync = DataSyncService(fast=fast)
         self.features = FeatureGenerationService()
         self.predictions = PredictionGenerationService()
         self.ui_cache = UICacheService()
@@ -121,19 +123,22 @@ class PipelineOrchestrator:
                 progress(3, "D", 100, "Live data synced")
 
             if 4 in step_indices:
-                progress(4, "E", 0, "Generating features...")
-                matches = self._all_target_matches()
-                for i, m in enumerate(matches):
-                    try:
-                        self.features.build(m)
-                        records_written += 1
-                    except Exception as exc:
-                        records_failed += 1
-                        logger.warning("Feature gen failed match %s: %s", m["id"], exc)
-                    if i % 3 == 0 or i == len(matches) - 1:
-                        pct = round((i + 1) / max(len(matches), 1) * 100, 1)
-                        progress(4, "E", pct, f"Features {i + 1}/{len(matches)}")
-                progress(4, "E", 100, f"Features for {records_written} matches")
+                if self.fast and mode == "full_pipeline":
+                    progress(4, "E", 100, "Features built during prediction step")
+                else:
+                    progress(4, "E", 0, "Generating features...")
+                    matches = self._all_target_matches()
+                    for i, m in enumerate(matches):
+                        try:
+                            self.features.build(m)
+                            records_written += 1
+                        except Exception as exc:
+                            records_failed += 1
+                            logger.warning("Feature gen failed match %s: %s", m["id"], exc)
+                        if i % 3 == 0 or i == len(matches) - 1:
+                            pct = round((i + 1) / max(len(matches), 1) * 100, 1)
+                            progress(4, "E", pct, f"Features {i + 1}/{len(matches)}")
+                    progress(4, "E", 100, f"Features for {records_written} matches")
 
             if 5 in step_indices:
                 progress(5, "F", 50, "Validating features...")
@@ -149,7 +154,9 @@ class PipelineOrchestrator:
                     progress(6, "G", pct, f"Predictions {i}/{total_n} matches")
 
                 result = self.predictions.generate_all(
-                    limit=500, progress_callback=pred_progress
+                    limit=500,
+                    progress_callback=pred_progress,
+                    run_simulation=not self.fast,
                 )
                 records_written += result.get("generated", 0)
                 records_failed += result.get("errors", 0)
@@ -158,12 +165,15 @@ class PipelineOrchestrator:
             if 7 in step_indices:
                 progress(7, "H", 0, "Validating predictions...")
                 invalid = 0
-                for p in db.get_all_predictions():
+                import json
+
+                target_ids = [int(m["id"]) for m in self._all_target_matches()]
+                pred_map = db.get_predictions_for_match_ids(target_ids) if target_ids else {}
+                for p in pred_map.values():
                     pd = dict(p)
                     if pd.get("top_scorelines_json"):
-                        import json
                         pd["top_scorelines"] = json.loads(pd["top_scorelines_json"])
-                    st, errs = validate_prediction(pd)
+                    st, _errs = validate_prediction(pd)
                     if st == "invalid":
                         invalid += 1
                 progress(7, "H", 100, f"Validation done ({invalid} invalid)")
@@ -203,6 +213,8 @@ class PipelineOrchestrator:
             if _active_run_id == run_id:
                 with _run_lock:
                     _active_run_id = None
+            if status == "success":
+                invalidate_all()
 
         return {
             "status": status,
@@ -233,9 +245,11 @@ def run_pipeline_async(mode: str, triggered_by: str = "admin") -> int:
         run_id = pipe_db.start_pipeline_run(mode, triggered_by)
         _active_run_id = run_id
 
+    fast = triggered_by in ("admin", "scheduler", "manual")
+
     def _worker():
         try:
-            PipelineOrchestrator().run(
+            PipelineOrchestrator(fast=fast).run(
                 mode=mode, triggered_by=triggered_by, run_id=run_id
             )
         finally:

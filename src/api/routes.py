@@ -440,8 +440,7 @@ def admin_pipeline_run(
     if mode not in ("full_pipeline", "data_sync_only", "features_only", "predictions_only"):
         raise HTTPException(status_code=400, detail="Invalid pipeline mode")
     run_id = run_pipeline_async(mode=mode, triggered_by="admin")
-    invalidate_all()
-    return {"status": "started", "run_id": run_id, "mode": mode}
+    return {"status": "started", "run_id": run_id, "mode": mode, "fast": True}
 
 
 def _data_feed_hints(keys: dict[str, Any], counts: dict[str, int]) -> list[str]:

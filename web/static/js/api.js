@@ -126,10 +126,14 @@ export async function loadFreshness() {
 }
 
 export async function pollPipelineProgress(onUpdate, intervalMs = 800) {
+  let pollErrors = 0;
+  const maxPollErrors = 40;
+
   return new Promise((resolve) => {
     const poll = async () => {
       try {
         const data = await request("/admin/pipeline/progress", { noCache: true });
+        pollErrors = 0;
         onUpdate(data);
         if (data.running) {
           setTimeout(poll, intervalMs);
@@ -137,7 +141,12 @@ export async function pollPipelineProgress(onUpdate, intervalMs = 800) {
           resolve(data);
         }
       } catch (e) {
-        resolve({ running: false, error: e.message });
+        pollErrors += 1;
+        if (pollErrors < maxPollErrors) {
+          setTimeout(poll, intervalMs * 2);
+        } else {
+          resolve({ running: false, error: e.message });
+        }
       }
     };
     poll();

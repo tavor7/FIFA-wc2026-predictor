@@ -182,8 +182,12 @@ async function adminRunPipeline(mode) {
   if (panel) panel.classList.remove("hidden");
   try {
     await request(`/admin/pipeline/run?mode=${encodeURIComponent(mode)}`, { method: "POST" });
-    await pollPipelineProgress((p) => updateProgressBar("pipeline-progress", p));
-    await navigate();
+    const result = await pollPipelineProgress((p) => updateProgressBar("pipeline-progress", p));
+    if (result?.error) {
+      showError(`Pipeline polling lost connection: ${result.error}`);
+    } else if (activeRoute === "monitor") {
+      await navigate();
+    }
   } catch (e) {
     showError(e.message || "Pipeline run failed");
   }

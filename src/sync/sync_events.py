@@ -46,16 +46,25 @@ def sync_events_for_match(
 def sync_events(
     client: Optional[APIClient] = None,
     include_recent: bool = True,
+    *,
+    tournament_only: bool = True,
+    max_matches: Optional[int] = 25,
+    live_only: bool = False,
 ) -> dict[str, Any]:
-    """Sync match events for all live and recently finished matches in the DB."""
+    """Sync match events for live and/or recent matches (scoped to avoid API timeouts)."""
     client = client or APIClient()
     db.init_db()
 
     statuses = list(LIVE_STATUSES)
-    if include_recent:
+    if include_recent and not live_only:
         statuses.extend(FINISHED_STATUSES)
 
-    matches = db.get_matches_by_status(statuses)
+    matches = db.get_matches_by_status(statuses, tournament_only=tournament_only)
+    if live_only:
+        live_set = set(LIVE_STATUSES)
+        matches = [m for m in matches if m["status"] in live_set]
+    if max_matches is not None and len(matches) > max_matches:
+        matches = matches[-max_matches:]
     synced_matches = 0
     total_events = 0
     errors = 0

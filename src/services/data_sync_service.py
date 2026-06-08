@@ -40,14 +40,19 @@ def _log_sync(job: str, result: dict[str, Any], source: str = "api-football") ->
 
 
 class DataSyncService:
-    def __init__(self, client: Optional[APIClient] = None):
+    def __init__(self, client: Optional[APIClient] = None, *, fast: bool = True):
         self.client = client
+        self.fast = fast
 
     def sync_fixtures(self) -> dict[str, Any]:
-        result = sync_all_matches(days_ahead=120, days_back=30)
-        sync_standings()
-        sync_bracket()
-        sync_events()
+        if self.fast:
+            # Bundled seeds cover the schedule; light API refresh only
+            result = sync_all_matches(days_ahead=21, days_back=7)
+            sync_standings()
+        else:
+            result = sync_all_matches(days_ahead=60, days_back=14)
+            sync_standings()
+            sync_bracket()
         ext.upsert_data_freshness("fixtures", 100.0, source="api-football")
         _log_sync("sync_fixtures", result)
         return result
@@ -74,7 +79,7 @@ class DataSyncService:
     def sync_team_stats(self) -> dict[str, Any]:
         fc26 = self.ensure_fc26_squads()
         # Kaggle has <26 players for some nations — API fills the rest
-        result = sync_squads(fill_thin_squads=True)
+        result = sync_squads(fill_thin_squads=True, thin_teams_only=self.fast)
         ext.upsert_data_freshness("team_stats", 100.0, source="api-football")
         ext.upsert_data_freshness("player_stats", 90.0, source="api-football")
         _log_sync("sync_team_stats", result)
@@ -84,7 +89,7 @@ class DataSyncService:
         live = db.get_live_matches()
         result = sync_live_data()
         if live or result.get("live_from_api", 0) > 0:
-            sync_events()
+            sync_events(tournament_only=True, max_matches=20, live_only=True)
             ext.upsert_data_freshness("lineups", 95.0, source="live")
             ext.upsert_data_freshness("player_stats", 95.0, source="live")
         ext.upsert_data_freshness("fixtures", 100.0, source="live")
