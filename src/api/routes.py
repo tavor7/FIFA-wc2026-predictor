@@ -121,7 +121,27 @@ def home_lite(limit: int = 48, live_limit: int = 8) -> dict[str, Any]:
     hit = get_cached(key)
     if hit is not None:
         return hit
-    payload = lite_handlers.get_home_lite(limit=limit, live_limit=live_limit)
+    try:
+        payload = lite_handlers.get_home_lite(limit=limit, live_limit=live_limit)
+    except Exception as exc:
+        import logging
+        from datetime import datetime
+
+        from src.api.helpers import home_dashboard
+
+        logging.getLogger(__name__).warning("home-lite failed, using /home fallback: %s", exc)
+        dash = home_dashboard(limit=limit)
+        payload = {
+            "stats": {
+                "upcoming": dash["stats"].get("upcoming", 0),
+                "live": dash["stats"].get("live", 0),
+                "predictions": dash["stats"].get("predictions", 0),
+            },
+            "matches": dash["matches"],
+            "live": [],
+            "last_prediction_update": None,
+            "last_updated": datetime.utcnow().isoformat(),
+        }
     if payload.get("last_prediction_update"):
         from src.cache.response_cache import set_cache_meta
 

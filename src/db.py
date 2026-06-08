@@ -1420,43 +1420,19 @@ def get_home_feed(limit: int = 48, tournament_only: bool = True) -> dict[str, An
     }
 
 
-def get_home_lite_feed(upcoming_limit: int = 48, live_limit: int = 8) -> dict[str, Any]:
-    """Upcoming + live matches + batch predictions in one connection."""
-    wc = WC_FILTER_SQL
-    wc_params = _wc_filter_params()
+def _live_match_clause() -> tuple[str, list[Any]]:
+    """WHERE fragment + params for in-play matches (status placeholders before WC filter)."""
     live_statuses = ("1H", "2H", "HT", "ET", "BT", "P", "LIVE", "IN_PLAY", "PAUSED")
     live_ph = ",".join("?" * len(live_statuses))
-    upcoming_where = f"""
-        (
-            status IN ('NS', 'TBD', 'SCHEDULED', 'TIMED', 'Not Started')
-            OR (status NOT IN ('FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO')
-                AND home_goals IS NULL)
-        ){wc}
-    """
-    live_where = f"status IN ({live_ph}){wc}"
-    stats_params = wc_params + list(live_statuses) + wc_params
+    return f"status IN ({live_ph}){WC_FILTER_SQL}", list(live_statuses) + _wc_filter_params()
+
+
+def get_home_lite_feed(upcoming_limit: int = 48, live_limit: int = 8) -> dict[str, Any]:
+    """Upcoming + live matches + batch predictions — reuses proven get_home_feed queries."""
+    feed = get_home_feed(limit=upcoming_limit, tournament_only=True)
+    live_where, live_params = _live_match_clause()
 
     with get_connection() as conn:
-        stats_row = _execute(
-            conn,
-            f"""
-            SELECT
-                (SELECT COUNT(*) FROM matches WHERE {upcoming_where}) AS upcoming,
-                (SELECT COUNT(*) FROM matches WHERE {live_where}) AS live,
-                (SELECT COUNT(*) FROM predictions) AS predictions,
-                (SELECT MAX(generated_at) FROM predictions) AS last_prediction_update
-            """,
-            stats_params,
-        ).fetchone()
-        upcoming_rows = _execute(
-            conn,
-            f"""
-            SELECT id, home_team, away_team, date, status, stage, group_name, home_goals, away_goals
-            FROM matches WHERE {upcoming_where}
-            ORDER BY date ASC LIMIT ?
-            """,
-            wc_params + [upcoming_limit],
-        ).fetchall()
         live_rows = _execute(
             conn,
             f"""
@@ -1464,30 +1440,36 @@ def get_home_lite_feed(upcoming_limit: int = 48, live_limit: int = 8) -> dict[st
             FROM matches WHERE {live_where}
             ORDER BY date ASC LIMIT ?
             """,
-            list(live_statuses) + wc_params + [live_limit],
+            live_params + [live_limit],
         ).fetchall()
-        ids = list({int(dict(r)["id"]) for r in upcoming_rows + live_rows})
-        pred_map: dict[int, Row] = {}
-        if ids:
-            placeholders = ",".join("?" * len(ids))
+        ts_row = _execute(
+            conn, "SELECT MAX(generated_at) AS last_prediction_update FROM predictions"
+        ).fetchone()
+
+    pred_map: dict[int, Row] = dict(feed["predictions"])
+    upcoming_ids = {int(dict(r)["id"]) for r in feed["matches"]}
+    extra_live_ids = [int(dict(r)["id"]) for r in live_rows if int(dict(r)["id"]) not in upcoming_ids]
+    if extra_live_ids:
+        placeholders = ",".join("?" * len(extra_live_ids))
+        with get_connection() as conn:
             for row in _execute(
                 conn,
                 f"SELECT * FROM predictions WHERE match_id IN ({placeholders})",
-                ids,
+                extra_live_ids,
             ).fetchall():
                 pred_map[int(dict(row)["match_id"])] = row
 
-    sd = dict(stats_row)
+    ts = dict(ts_row).get("last_prediction_update") if ts_row else None
     return {
         "stats": {
-            "upcoming": int(sd["upcoming"]),
-            "live": int(sd["live"]),
-            "predictions": int(sd["predictions"]),
+            "upcoming": feed["stats"]["upcoming"],
+            "live": feed["stats"]["live"],
+            "predictions": feed["stats"]["predictions"],
         },
-        "upcoming": upcoming_rows,
+        "upcoming": feed["matches"],
         "live": live_rows,
         "predictions": pred_map,
-        "last_prediction_update": sd.get("last_prediction_update"),
+        "last_prediction_update": ts,
     }
 
 

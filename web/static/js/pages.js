@@ -38,8 +38,23 @@ function regionalVenueCard(form) {
   return `<div class="form-card"><span>Venue</span><strong>Neutral site</strong></div>`;
 }
 
+async function loadHomeFeed() {
+  try {
+    return await request("/home-lite");
+  } catch {
+    const data = await request("/home?limit=48");
+    return {
+      stats: data.stats,
+      matches: data.matches || [],
+      live: data.live || [],
+      last_updated: data.last_updated || data.last_prediction_update,
+      last_prediction_update: data.last_prediction_update,
+    };
+  }
+}
+
 export async function pageMatches() {
-  const data = await request("/home-lite");
+  const data = await loadHomeFeed();
   window.setPageMeta?.({ lastUpdated: data.last_updated || data.last_prediction_update });
   const stats = data.stats || {};
   const matches = data.matches || [];
@@ -55,7 +70,7 @@ export async function pageMatches() {
 }
 
 export async function pageLive() {
-  const data = await request("/home-lite");
+  const data = await loadHomeFeed();
   const matches = data.live || [];
   return disclaimerHtml() +
     (matches.length
