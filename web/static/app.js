@@ -27,16 +27,24 @@ const ROUTES = [
   { pattern: /^\/bracket$/, name: "bracket", handler: () => pageBracket() },
   { pattern: /^\/players$/, name: "players", handler: () => pagePlayers() },
   { pattern: /^\/reports$/, name: "reports", handler: () => pageReports() },
-  { pattern: /^\/monitor$/, name: "monitor", handler: () => pageMonitor() },
+  { pattern: /^\/monitor(\/.*)?$/, name: "monitor", handler: (m) => pageMonitor(m[0] || "/monitor", m.search || "") },
   { pattern: /^\/$/, name: "matches", handler: () => pageMatches() },
 ];
 
 function parseHash() {
   const raw = (location.hash || "#/").slice(1);
-  const path = raw.startsWith("/") ? raw : `/${raw}`;
+  const [pathPart, queryPart] = raw.split("?");
+  const path = pathPart.startsWith("/") ? pathPart : `/${pathPart}`;
+  const search = queryPart ? `?${queryPart}` : "";
   for (const route of ROUTES) {
     const m = path.match(route.pattern);
-    if (m) return { name: route.name, handler: route.handler, match: m };
+    if (m) {
+      m.search = search;
+      if (route.name === "monitor") {
+        return { name: route.name, handler: () => pageMonitor(path, search), match: m };
+      }
+      return { name: route.name, handler: route.handler, match: m };
+    }
   }
   return { name: "matches", handler: () => pageMatches(), match: ["/"] };
 }
@@ -246,7 +254,32 @@ document.addEventListener("click", (e) => {
     e.preventDefault();
     adminRunPipeline(pipeBtn.dataset.pipelineMode);
   }
+  if (e.target.closest("#btn-repair-predictions")) {
+    e.preventDefault();
+    adminRepairPredictions();
+  }
 });
+
+async function adminRepairPredictions() {
+  if (!(await ensureAdminAuth())) return;
+  const btn = document.querySelector("#btn-repair-predictions");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Repairing…";
+  }
+  try {
+    const data = await request("/admin/audit/repair-predictions", { method: "POST" });
+    alert(`Fixed ${data.generated ?? 0} predictions. Missing after: ${data.missing_after ?? "?"}`);
+    await navigate();
+  } catch (err) {
+    showError(err.message || "Repair failed");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Repair missing predictions";
+    }
+  }
+}
 
 window.setPageMeta = (meta) => {
   pageMeta = meta || {};

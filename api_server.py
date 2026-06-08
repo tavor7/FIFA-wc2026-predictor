@@ -19,8 +19,13 @@ from starlette.responses import Response
 
 from src import db
 from src.api.routes import router
-from src.cache.response_cache import cache_key, get_cache_meta, get_cached, set_cached, _ttl_for_path
-from src.model_storage import load_models_on_startup, save_models_after_train
+from src.cache.response_cache import cache_key, get_cache_meta, get_cached, _ttl_for_path
+from src.model_storage import load_models_on_startup
+from src.observability.request_metrics import (
+    get_db_ms,
+    record_api_metric,
+    set_request_path,
+)
 from src.scheduler import start_scheduler, stop_scheduler
 from src.seed.load_seeds import ensure_baseline_data
 
@@ -55,12 +60,15 @@ def _delayed_scheduler_start() -> None:
 
     _time.sleep(30)
     if ENABLE_SCHEDULER:
+        from src.observability.request_metrics import prune_old_metrics
+
+        prune_old_metrics()
         start_scheduler()
         logger.info("Background scheduler enabled (delayed start)")
 
 
 class TimingAndCacheMiddleware(BaseHTTPMiddleware):
-    """Response timing headers + HTTP cache-control for read endpoints."""
+    """Response timing headers, cache detection, and persisted API metrics."""
 
     CACHE_PATHS = (
         "/home",
@@ -73,11 +81,33 @@ class TimingAndCacheMiddleware(BaseHTTPMiddleware):
     )
 
     async def dispatch(self, request: Request, call_next) -> Response:
+        path = request.url.path
+        set_request_path(path)
         t0 = time.perf_counter()
-        response = await call_next(request)
-        elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+        cache_hit = False
+        if request.method == "GET":
+            key = cache_key(path, str(request.url.query))
+            cache_hit = get_cached(key) is not None
 
-        response.headers["X-Response-Time-ms"] = str(elapsed_ms)
+        response = await call_next(request)
+        handler_ms = (time.perf_counter() - t0) * 1000
+
+        body = b""
+        async for chunk in response.body_iterator:
+            body += chunk
+        serialization_ms = (time.perf_counter() - t0) * 1000 - handler_ms
+        total_ms = (time.perf_counter() - t0) * 1000
+        db_ms = get_db_ms()
+
+        response = Response(
+            content=body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=response.media_type,
+        )
+
+        response.headers["X-Response-Time-ms"] = str(round(total_ms, 1))
+        response.headers["X-DB-Time-ms"] = str(round(db_ms, 1))
         meta = get_cache_meta()
         if meta.get("data_version"):
             response.headers["X-Data-Version"] = meta["data_version"]
@@ -85,12 +115,22 @@ class TimingAndCacheMiddleware(BaseHTTPMiddleware):
             response.headers["X-Last-Prediction-Update"] = meta["last_prediction_update"]
 
         if request.method == "GET":
-            key = cache_key(request.url.path, str(request.url.query))
-            response.headers["X-Cache"] = "HIT" if get_cached(key) is not None else "MISS"
-            if any(request.url.path.startswith(p) for p in self.CACHE_PATHS):
-                ttl = _ttl_for_path(request.url.path)
+            response.headers["X-Cache"] = "HIT" if cache_hit else "MISS"
+            if any(path.startswith(p) for p in self.CACHE_PATHS):
+                ttl = _ttl_for_path(path)
                 if ttl:
                     response.headers["Cache-Control"] = f"public, max-age={min(ttl, 120)}"
+
+        record_api_metric(
+            method=request.method,
+            path=path,
+            status_code=response.status_code,
+            total_ms=total_ms,
+            db_ms=db_ms,
+            serialization_ms=max(serialization_ms, 0),
+            cache_hit=cache_hit,
+            payload_bytes=len(body),
+        )
 
         return response
 
@@ -111,7 +151,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="WC 2026 Research API",
     description="Designed by Amit Tavor. Research recommendation system.",
-    version="2.1.0",
+    version="2.2.0",
     lifespan=lifespan,
 )
 

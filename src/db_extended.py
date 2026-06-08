@@ -911,12 +911,61 @@ def get_sync_logs_by_job(job_name: str, limit: int = 20) -> list[Row]:
 # ---------------------------------------------------------------------------
 
 
+def compute_entity_completeness(entity: str) -> float:
+    """Coverage-based completeness for freshness metadata."""
+    from src import config
+    from src.seed.import_fc26_players import squad_size_target
+    from src.tournament_teams import get_wc2026_team_names
+
+    target_teams = len(get_wc2026_team_names()) or 48
+    squad_target = squad_size_target()
+
+    with get_connection() as conn:
+        if entity == "fixtures":
+            row = _execute(conn, "SELECT COUNT(*) AS c FROM matches").fetchone()
+            n = int(dict(row)["c"])
+            return min(100.0, round(n / 72 * 100, 1))
+        if entity == "team_stats":
+            teams = _execute(conn, "SELECT COUNT(*) AS c FROM teams").fetchone()
+            return min(100.0, round(int(dict(teams)["c"]) / target_teams * 100, 1))
+        if entity == "player_stats":
+            players = _execute(conn, "SELECT COUNT(*) AS c FROM players").fetchone()
+            expected = target_teams * squad_target
+            return min(100.0, round(int(dict(players)["c"]) / max(expected, 1) * 100, 1))
+        if entity == "injuries":
+            inj = _execute(conn, "SELECT COUNT(*) AS c FROM injuries").fetchone()
+            return min(100.0, round(int(dict(inj)["c"]) / max(target_teams * 2, 1) * 100, 1))
+        if entity == "predictions":
+            upcoming = _execute(
+                conn,
+                """
+                SELECT COUNT(*) AS c FROM matches m
+                WHERE NOT EXISTS (SELECT 1 FROM predictions p WHERE p.match_id = m.id)
+                  AND (m.status IN ('NS','TBD','SCHEDULED','TIMED','Not Started') OR m.home_goals IS NULL)
+                """,
+            ).fetchone()
+            missing = int(dict(upcoming)["c"])
+            total_row = _execute(conn, "SELECT COUNT(*) AS c FROM matches").fetchone()
+            total = int(dict(total_row)["c"])
+            have = max(total - missing, 0)
+            return min(100.0, round(have / max(total, 1) * 100, 1))
+        if entity == "models":
+            row = _execute(conn, "SELECT COUNT(*) AS c FROM model_registry").fetchone()
+            return 100.0 if int(dict(row)["c"]) > 0 else 0.0
+    return 90.0
+
+
 def upsert_data_freshness(
     entity: str,
     completeness_pct: Optional[float] = None,
     source: Optional[str] = None,
     notes: Optional[str] = None,
 ) -> None:
+    if completeness_pct is None:
+        try:
+            completeness_pct = compute_entity_completeness(entity)
+        except Exception:
+            completeness_pct = 90.0
     now = _now()
     with get_connection() as conn:
         _execute(

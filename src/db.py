@@ -789,6 +789,66 @@ def _ensure_pipeline_tables(conn: Any) -> None:
         "CREATE INDEX IF NOT EXISTS idx_match_cards_status ON match_cards_cache(status)"
     )
 
+    serial_obs = "SERIAL PRIMARY KEY" if config.USE_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    if not _table_exists(conn, "pipeline_step_runs"):
+        fk = "REFERENCES pipeline_runs(id) ON DELETE CASCADE" if config.USE_POSTGRES else ""
+        conn.execute(f"""
+            CREATE TABLE pipeline_step_runs (
+                id {serial_obs},
+                run_id INTEGER NOT NULL{' ' + fk if fk else ''},
+                step_key TEXT NOT NULL,
+                step_index INTEGER NOT NULL,
+                step_name TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                duration_seconds REAL,
+                records_read INTEGER DEFAULT 0,
+                records_written INTEGER DEFAULT 0,
+                records_failed INTEGER DEFAULT 0,
+                status TEXT NOT NULL,
+                error_message TEXT,
+                UNIQUE (run_id, step_key)
+            )
+        """)
+
+    if not _table_exists(conn, "api_request_metrics"):
+        conn.execute(f"""
+            CREATE TABLE api_request_metrics (
+                id {serial_obs},
+                recorded_at TEXT NOT NULL,
+                method TEXT,
+                path TEXT,
+                status_code INTEGER,
+                total_ms REAL,
+                db_ms REAL,
+                serialization_ms REAL,
+                cache_hit INTEGER DEFAULT 0,
+                payload_bytes INTEGER,
+                slow INTEGER DEFAULT 0
+            )
+        """)
+
+    if not _table_exists(conn, "slow_query_log"):
+        conn.execute(f"""
+            CREATE TABLE slow_query_log (
+                id {serial_obs},
+                recorded_at TEXT NOT NULL,
+                duration_ms REAL,
+                sql_fingerprint TEXT,
+                request_path TEXT
+            )
+        """)
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_pipeline_step_runs_run ON pipeline_step_runs(run_id, step_index)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_api_metrics_path ON api_request_metrics(path, recorded_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_slow_query_recorded ON slow_query_log(recorded_at DESC)"
+    )
+
 
 def _seed_stage_goal_priors(conn: Any) -> None:
     """Historical WC average goals by stage (soft priors)."""

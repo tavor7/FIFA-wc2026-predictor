@@ -121,6 +121,44 @@ export function factorChartHtml(pred, canvasId) {
     <canvas id="${canvasId}" height="160"></canvas></div>`;
 }
 
+export function featureContributionsChartHtml(pred, canvasId) {
+  const c = pred?.feature_contributions;
+  if (!c || !Object.keys(c).length) return "";
+  return `<div class="section"><h3>Main drivers (feature contributions)</h3>
+    <canvas id="${canvasId}" height="180"></canvas></div>`;
+}
+
+export function renderFeatureContributionsChart(canvasId, pred) {
+  const el = document.getElementById(canvasId);
+  if (!el || !window.Chart) return;
+  const c = pred?.feature_contributions;
+  if (!c) return;
+  const entries = Object.entries(c).filter(([, v]) => typeof v === "number");
+  if (!entries.length) return;
+  new Chart(el, {
+    type: "bar",
+    data: {
+      labels: entries.map(([k]) => k.replace(/_/g, " ")),
+      datasets: [{
+        data: entries.map(([, v]) => v),
+        backgroundColor: entries.map(([, v]) =>
+          v >= 0 ? "rgba(34, 197, 94, 0.65)" : "rgba(248, 113, 113, 0.65)"
+        ),
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(148,163,184,0.1)" } },
+        y: { ticks: { color: "#cbd5e1" }, grid: { display: false } },
+      },
+    },
+  });
+}
+
 export function renderFactorChart(canvasId, pred) {
   const el = document.getElementById(canvasId);
   if (!el || !window.Chart) return;

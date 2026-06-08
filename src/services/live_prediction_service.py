@@ -6,10 +6,14 @@ from typing import Any, Optional
 
 from src import db
 from src import db_extended as ext
+from src.explain import build_structured_explanation, generate_explanation
+from src.explain.confidence import compute_confidence, feature_contributions
 from src.model import GoalPredictionModel
 from src.models.ensemble import EnsemblePredictor, get_or_create_ensemble
 from src.models.live_match import LiveMatchModel
+from src.models.model_registry import get_active_model_info
 from src.services.feature_generation_service import FeatureGenerationService
+from src.services.prediction_validation_service import build_completeness_flags, validate_prediction
 
 
 class LivePredictionService:
@@ -42,13 +46,51 @@ class LivePredictionService:
             events=events,
         )
 
-        scorelines = GoalPredictionModel.scoreline_distribution(
-            live_out["lambda_home"], live_out["lambda_away"]
-        )
+        lh = live_out["lambda_home"]
+        la = live_out["lambda_away"]
+        scorelines = GoalPredictionModel.scoreline_distribution(lh, la)
         top5 = GoalPredictionModel.top_scorelines(scorelines, n=5)
         best = top5[0] if top5 else {"home": 0, "away": 0, "probability": 0.1}
+        outcomes = {
+            "home_win": live_out["home_win"],
+            "draw": live_out["draw"],
+            "away_win": live_out["away_win"],
+        }
+        confidence = compute_confidence(mf, prematch)
+        model_info = get_active_model_info()
 
-        return {
+        explanation_json = build_structured_explanation(
+            home_team=match_row["home_team"],
+            away_team=match_row["away_team"],
+            predicted_home=int(best["home"]),
+            predicted_away=int(best["away"]),
+            features=mf,
+            top_scorelines=top5,
+            outcomes=outcomes,
+            positive_factors=confidence.positive_factors,
+            negative_factors=confidence.risk_factors + ["Live in-game adjustments"],
+            lambda_home=lh,
+            lambda_away=la,
+            lambda_home_std=live_out.get("lambda_home_std", 0.15),
+            lambda_away_std=live_out.get("lambda_away_std", 0.15),
+        )
+        explanation_json["prediction_source_mode"] = "live_model"
+        explanation_json["fallback_reason"] = "Live match — in-game model active"
+
+        explanation = generate_explanation(
+            home_team=match_row["home_team"],
+            away_team=match_row["away_team"],
+            predicted_home=int(best["home"]),
+            predicted_away=int(best["away"]),
+            features=mf,
+            top_scorelines=top5,
+            outcomes=outcomes,
+        )
+
+        contributions = feature_contributions(mf, prematch)
+        completeness = build_completeness_flags(mf, True, True)
+
+        payload = {
             "match_id": match_id,
             "prediction_type": "live",
             "predicted_home_goals": int(best["home"]),
@@ -58,17 +100,27 @@ class LivePredictionService:
             "away_win_prob": live_out["away_win"],
             "exact_score_prob": best["probability"],
             "top_scorelines": top5,
-            "explanation": live_out.get("explanation", "Live in-game model"),
-            "lambda_home": live_out["lambda_home"],
-            "lambda_away": live_out["lambda_away"],
-            "lambda_home_mean": live_out["lambda_home"],
+            "explanation": explanation or live_out.get("explanation", "Live in-game model"),
+            "explanation_json": explanation_json,
+            "lambda_home": lh,
+            "lambda_away": la,
+            "lambda_home_mean": lh,
             "lambda_home_std": live_out.get("lambda_home_std", 0.15),
-            "lambda_away_mean": live_out["lambda_away"],
+            "lambda_away_mean": la,
             "lambda_away_std": live_out.get("lambda_away_std", 0.15),
-            "confidence_pct": live_out.get("confidence_pct", 55.0),
-            "data_completeness_pct": 80.0,
+            "confidence_pct": live_out.get("confidence_pct", confidence.confidence_pct),
+            "data_completeness_pct": max(80.0, confidence.data_completeness_pct),
             "model_agreement": "Live",
             "ensemble_json": {"prematch": prematch.to_dict(), "live": live_out},
-            "factor_breakdown_json": live_out.get("factors", {}),
+            "factor_breakdown_json": confidence.to_dict(),
+            "feature_contributions_json": contributions,
+            "prediction_source_mode": "live_model",
+            "completeness_flags_json": completeness,
+            "model_version": model_info.get("model_version"),
+            "feature_version": model_info.get("feature_version"),
             "live_prediction_json": live_out,
         }
+        val_status, val_errors = validate_prediction(payload)
+        payload["validation_status"] = val_status
+        payload["validation_errors_json"] = val_errors
+        return payload

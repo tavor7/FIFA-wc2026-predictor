@@ -421,10 +421,99 @@ def admin_auth(body: dict[str, str]) -> dict[str, Any]:
 
 @router.get("/admin/pipeline/status")
 def admin_pipeline_status(_auth: None = Depends(require_admin)) -> dict[str, Any]:
+    from src.db_pipeline import PIPELINE_STEPS, STEP_LABELS
+
+    active = pipe_db.get_active_pipeline_progress()
     return {
         "runs": pipe_db.get_latest_pipeline_runs_per_service(),
-        "active": pipe_db.get_active_pipeline_progress(),
+        "active": active,
+        "steps": [
+            {"key": k, "index": i, "name": n, "label": STEP_LABELS.get(k, n)}
+            for i, (k, n) in enumerate(PIPELINE_STEPS)
+        ],
     }
+
+
+@router.get("/admin/pipeline/runs")
+def admin_pipeline_runs(
+    limit: int = 20,
+    _auth: None = Depends(require_admin),
+) -> dict[str, Any]:
+    runs = pipe_db.get_pipeline_runs_history(limit=limit)
+    for run in runs:
+        run["steps"] = pipe_db.get_step_runs_for_run(int(run["id"]))
+    return {"runs": runs, "limit": limit}
+
+
+@router.get("/admin/pipeline/runs/{run_id}")
+def admin_pipeline_run_detail(
+    run_id: int,
+    _auth: None = Depends(require_admin),
+) -> dict[str, Any]:
+    runs = pipe_db.get_pipeline_runs_history(limit=500)
+    run = next((r for r in runs if int(r["id"]) == run_id), None)
+    if not run:
+        raise HTTPException(status_code=404, detail="Pipeline run not found")
+    run["steps"] = pipe_db.get_step_runs_for_run(run_id)
+    return run
+
+
+@router.get("/admin/audit/summary")
+def admin_audit_summary(_auth: None = Depends(require_admin)) -> dict[str, Any]:
+    from src.services.audit_service import get_audit_summary
+
+    return get_audit_summary()
+
+
+@router.get("/admin/audit/predictions")
+def admin_audit_predictions(
+    limit: int = 100,
+    offset: int = 0,
+    _auth: None = Depends(require_admin),
+) -> dict[str, Any]:
+    from src.services.audit_service import get_prediction_audit
+
+    return get_prediction_audit(limit=limit, offset=offset)
+
+
+@router.get("/admin/audit/data-flow")
+def admin_audit_data_flow(_auth: None = Depends(require_admin)) -> dict[str, Any]:
+    from src.services.audit_service import get_data_flow
+
+    return get_data_flow()
+
+
+@router.get("/admin/audit/cache")
+def admin_audit_cache(_auth: None = Depends(require_admin)) -> dict[str, Any]:
+    from src.services.audit_service import get_cache_audit
+
+    return get_cache_audit()
+
+
+@router.get("/admin/audit/data-quality")
+def admin_audit_data_quality(_auth: None = Depends(require_admin)) -> dict[str, Any]:
+    from src.services.audit_service import get_data_quality_audit
+
+    return get_data_quality_audit()
+
+
+@router.get("/admin/audit/performance")
+def admin_audit_performance(_auth: None = Depends(require_admin)) -> dict[str, Any]:
+    from src.observability.request_metrics import get_performance_summary
+    from src.api import screen_handlers
+
+    perf = get_performance_summary()
+    monitor = screen_handlers.get_monitor_screen()
+    perf["database_latency_ms"] = monitor.get("deployment", {}).get("database_latency_ms")
+    perf["scheduler_heartbeat"] = monitor.get("deployment", {}).get("last_scheduler_heartbeat")
+    return perf
+
+
+@router.post("/admin/audit/repair-predictions")
+def admin_repair_predictions(_auth: None = Depends(require_admin)) -> dict[str, Any]:
+    from src.services.audit_service import repair_missing_predictions
+
+    return repair_missing_predictions()
 
 
 @router.get("/admin/pipeline/progress")

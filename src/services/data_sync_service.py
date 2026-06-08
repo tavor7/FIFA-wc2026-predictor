@@ -53,13 +53,13 @@ class DataSyncService:
             result = sync_all_matches(days_ahead=60, days_back=14)
             sync_standings()
             sync_bracket()
-        ext.upsert_data_freshness("fixtures", 100.0, source="api-football")
+        ext.upsert_data_freshness("fixtures", source="api-football")
         _log_sync("sync_fixtures", result)
         return result
 
     def sync_injuries(self) -> dict[str, Any]:
         result = sync_injuries()
-        ext.upsert_data_freshness("injuries", 100.0, source="api-football")
+        ext.upsert_data_freshness("injuries", source="api-football")
         _log_sync("sync_injuries", result)
         return result
 
@@ -97,8 +97,8 @@ class DataSyncService:
         fc26 = self.ensure_fc26_squads()
         # Kaggle has <26 players for some nations — API fills the rest
         result = sync_squads(fill_thin_squads=True, thin_teams_only=self.fast)
-        ext.upsert_data_freshness("team_stats", 100.0, source="api-football")
-        ext.upsert_data_freshness("player_stats", 90.0, source="api-football")
+        ext.upsert_data_freshness("team_stats", source="api-football")
+        ext.upsert_data_freshness("player_stats", source="api-football")
         _log_sync("sync_team_stats", result)
         return {"fc26": fc26, **result}
 

@@ -34,8 +34,17 @@ def backtest_tournament(
     feature_svc = FeatureGenerationService()
     exact = top3 = top5 = outcome = 0
     briers, loglosses, home_probs, home_outcomes = [], [], [], []
+    retrain_every = 40
+    trained_on = 0
 
-    for m in finished:
+    for i, m in enumerate(finished):
+        if i >= 20 and i % retrain_every == 0:
+            try:
+                ensemble.train_all()
+                trained_on = i
+            except Exception as exc:
+                logger.debug("Walk-forward retrain at %d skipped: %s", i, exc)
+
         mf = feature_svc.build(m, for_training=True)
         result = ensemble.predict(mf)
         scorelines = GoalPredictionModel.scoreline_distribution(result.lambda_home, result.lambda_away)
@@ -75,6 +84,9 @@ def backtest_tournament(
     n = max(len(finished), 1)
     metrics = {
         "matches": len(finished),
+        "walk_forward": True,
+        "retrain_interval": retrain_every,
+        "last_retrain_at_match": trained_on,
         "outcome_accuracy": round(outcome / n, 4),
         "exact_score_accuracy": round(exact / n, 4),
         "top3_scoreline_accuracy": round(top3 / n, 4),

@@ -4,7 +4,9 @@ import { renderKnockoutBracket } from "./knockout-bracket.js";
 import {
   disclaimerHtml, matchCardHtml, statsHtml, section, tableHtml,
   timelineHtml, lineupsHtml, statsGridHtml,
-  factorChartHtml, renderFactorChart, simChartHtml, renderSimChart,
+  factorChartHtml, renderFactorChart,
+  featureContributionsChartHtml, renderFeatureContributionsChart,
+  simChartHtml, renderSimChart,
   liveProbChartHtml, renderLiveProbChart,
   progressBarHtml, dataFreshnessBadge, pageHeaderHtml, metricCard, latencyStatus, adminPanelHtml,
   formatDate,
@@ -12,6 +14,7 @@ import {
   formatPct,
   formatAvg,
 } from "./components.js";
+import { resolveMonitorPage } from "./monitor.js";
 
 function regionalBadge(form) {
   const boost = formatPct(form.regional_boost ?? form.host_region_boost);
@@ -158,10 +161,28 @@ export async function pageMatch(id) {
   const match = await request(`/matches/${id}`);
   const pred = match.prediction;
   const canvasId = `factor-${id}`;
+  const contribId = `contrib-${id}`;
 
   let html = disclaimerHtml(true) +
     `<div class="page-header"><a class="back-link" href="#/">← Back</a></div>` +
     matchCardHtml(match, { clickable: false });
+
+  if (pred) {
+    const wdl = pred.home_win_prob != null
+      ? `<div class="outcome-mini">
+          <span>H ${(pred.home_win_prob * 100).toFixed(0)}%</span>
+          <span>D ${(pred.draw_prob * 100).toFixed(0)}%</span>
+          <span>A ${(pred.away_win_prob * 100).toFixed(0)}%</span>
+        </div>`
+      : "";
+    html += section("Prediction summary", `<div class="form-grid">
+      <div class="form-card"><span>Source</span><strong>${escapeHtml((pred.prediction_source_mode || "—").replace(/_/g, " "))}</strong></div>
+      <div class="form-card"><span>Confidence</span><strong>${pred.confidence_pct != null ? `${Math.round(pred.confidence_pct)}%` : "—"}</strong></div>
+      <div class="form-card"><span>Completeness</span><strong>${pred.data_completeness_pct != null ? `${Math.round(pred.data_completeness_pct)}%` : "—"}</strong></div>
+      <div class="form-card"><span>Model</span><strong>${escapeHtml(pred.model_version || "—")}</strong></div>
+    </div>${wdl}
+    ${pred.explanation_json?.fallback_reason ? `<p class="prob-note"><strong>Fallback:</strong> ${escapeHtml(pred.explanation_json.fallback_reason)}</p>` : ""}`);
+  }
 
   if (pred?.lambda_home_mean != null) {
     const lh = `${Number(pred.lambda_home_mean).toFixed(2)} ± ${Number(pred.lambda_home_std || 0).toFixed(2)}`;
@@ -175,6 +196,24 @@ export async function pageMatch(id) {
   }
 
   html += factorChartHtml(pred, canvasId);
+  html += featureContributionsChartHtml(pred, contribId);
+
+  const flags = pred?.completeness_flags;
+  const risks = [];
+  if (flags) {
+    if (!flags.has_squad_data) risks.push("Squad strength estimated from defaults");
+    if (!flags.has_recent_form_data) risks.push("Limited recent form history");
+    if (!flags.has_injury_data) risks.push("Injury data incomplete");
+    (flags.confidence_penalty_reasons || []).forEach((r) => risks.push(r));
+  }
+  if (pred?.model_agreement && String(pred.model_agreement).toLowerCase().includes("low")) {
+    risks.push("Low model agreement");
+  }
+  if (risks.length) {
+    html += section("Risk factors", `<ul class="factor-list">${[...new Set(risks)].map((r) =>
+      `<li class="factor-neg">− ${escapeHtml(r)}</li>`
+    ).join("")}</ul>`);
+  }
 
   const liveProbId = `live-prob-${id}`;
   try {
@@ -245,6 +284,7 @@ export async function pageMatch(id) {
 
   setTimeout(() => {
     renderFactorChart(canvasId, pred);
+    renderFeatureContributionsChart(contribId, pred);
     request(`/matches/${id}/live-probs`)
       .then((pts) => renderLiveProbChart(liveProbId, pts))
       .catch(() => null);
@@ -354,12 +394,32 @@ export async function pageReports() {
   }
 
   if (calibration?.samples) {
+    const calId = "calibration-curve-chart";
     html += section("Calibration (stored predictions)", `<div class="form-grid">
       <div class="form-card"><span>Samples</span><strong>${calibration.samples}</strong></div>
       <div class="form-card"><span>Brier score</span><strong>${calibration.brier_score ?? "—"}</strong></div>
       <div class="form-card"><span>Log loss</span><strong>${calibration.log_loss ?? "—"}</strong></div>
       <div class="form-card"><span>ECE (home win)</span><strong>${calibration.ece_home_win ?? "—"}</strong></div>
-    </div>`);
+    </div>
+    ${calibration.calibration_curve?.length ? `<canvas id="${calId}" height="200"></canvas>` : ""}`);
+    if (calibration.calibration_curve?.length) {
+      setTimeout(() => {
+        const el = document.getElementById(calId);
+        if (!el || !window.Chart) return;
+        const curve = calibration.calibration_curve;
+        new Chart(el, {
+          type: "line",
+          data: {
+            labels: curve.map((b) => b.bin),
+            datasets: [
+              { label: "Predicted", data: curve.map((b) => b.mean_predicted), borderColor: "#22c55e", tension: 0.2 },
+              { label: "Observed", data: curve.map((b) => b.mean_observed), borderColor: "#94a3b8", borderDash: [4, 4], tension: 0.2 },
+            ],
+          },
+          options: { responsive: true, plugins: { legend: { labels: { color: "#cbd5e1" } } } },
+        });
+      }, 50);
+    }
   }
 
   if (backtest?.matches) {
@@ -373,78 +433,6 @@ export async function pageReports() {
   return html;
 }
 
-export async function pageMonitor() {
-  const [status, freshness] = await Promise.all([
-    request("/monitor/status"),
-    request("/meta/freshness").catch(() => null),
-  ]);
-  window.setPageMeta?.({ lastUpdated: status.last_updated, showTimestamp: false });
-  const calibration = await request("/evaluation/calibration?limit=30").catch(() => null);
-  const dep = status.deployment || {};
-  const counts = status.counts || status.table_counts || {};
-
-  const pipelineRows = (status.pipeline_runs || []).map(
-    (r) => `<tr>
-      <td>${escapeHtml(r.service_name || "—")}</td>
-      <td><span class="status-${(r.status || "").toLowerCase()}">${escapeHtml(r.status || "—")}</span></td>
-      <td>${r.records_written ?? "—"}</td>
-      <td>${r.duration_seconds != null ? `${r.duration_seconds}s` : "—"}</td>
-      <td>${formatDateIsrael(r.finished_at || r.started_at || "")}</td>
-    </tr>`
-  );
-
-  const failedRows = (status.failed_jobs || []).map(
-    (r) => `<li><strong>${escapeHtml(r.service_name)}</strong>: ${escapeHtml(r.error_message || "failed")}</li>`
-  ).join("");
-
-  const countRows = [
-    ["Fixtures", counts.fixtures ?? counts.matches],
-    ["Teams", counts.teams],
-    ["Players", counts.players],
-    ["Injuries", counts.injuries],
-    ["Predictions", counts.predictions],
-    ["Missing predictions", counts.missing_predictions],
-  ].map(([t, n]) => `<tr><td>${escapeHtml(t)}</td><td><strong>${n ?? 0}</strong></td></tr>`);
-
-  const keys = status.api_keys || {};
-
-  const latency = dep.database_latency_ms;
-  const heartbeat = dep.last_scheduler_heartbeat
-    ? formatDateIsrael(dep.last_scheduler_heartbeat)
-    : (dep.scheduler_enabled ? "Pending first run" : "Scheduler off");
-
-  return pageHeaderHtml(
-    "Pipeline status",
-    "System health, data coverage, and admin jobs"
-  ) +
-    adminPanelHtml() +
-    progressBarHtml("pipeline-progress") +
-    (status.last_updated
-      ? `<div class="monitor-updated">${dataFreshnessBadge(status.last_updated)}</div>`
-      : "") +
-    section("Deployment", `<div class="metric-grid">
-      ${metricCard("App version", dep.app_version || "—")}
-      ${metricCard("Git commit", (dep.git_commit || "—").slice(0, 8))}
-      ${metricCard("DB latency", latency != null ? `${latency} ms` : "—", latencyStatus(latency))}
-      ${metricCard("Scheduler", dep.scheduler_enabled ? "Enabled" : "Disabled", dep.scheduler_enabled ? "ok" : "warn")}
-      ${metricCard("Started", formatDateIsrael(dep.app_start_time || "") || "—")}
-      ${metricCard("Last heartbeat", heartbeat, dep.last_scheduler_heartbeat ? "ok" : "warn")}
-    </div>`) +
-    section("Data loaded", tableHtml(["Entity", "Count"], countRows)) +
-    section("Pipeline runs (latest per service)", tableHtml(
-      ["Service", "Status", "Written", "Duration", "Finished"],
-      pipelineRows.length ? pipelineRows : [`<tr><td colspan="5">No pipeline runs yet — run full pipeline from admin.</td></tr>`]
-    )) +
-    (failedRows ? section("Failed jobs", `<ul>${failedRows}</ul>`) : "") +
-    section("Health", `<div class="form-grid">
-      <div class="form-card"><span>Database</span><strong>${escapeHtml(status.database || "—")}</strong></div>
-      <div class="form-card"><span>API-Football</span><strong>${keys.api_football ? "Set" : "Missing"}</strong></div>
-      <div class="form-card"><span>football-data</span><strong>${keys.football_data ? "Set" : "Missing"}</strong></div>
-    </div>`) +
-    (calibration?.samples
-      ? section("Model calibration", `<div class="form-grid">
-          <div class="form-card"><span>Brier</span><strong>${calibration.brier_score ?? "—"}</strong></div>
-          <div class="form-card"><span>Samples</span><strong>${calibration.samples}</strong></div>
-        </div>`)
-      : "");
+export async function pageMonitor(path = "/monitor", search = "") {
+  return resolveMonitorPage(path, search);
 }

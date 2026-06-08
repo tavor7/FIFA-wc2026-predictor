@@ -292,6 +292,119 @@ def get_active_pipeline_progress() -> Optional[dict[str, Any]]:
     }
 
 
+def start_step_run(
+    run_id: int,
+    step_key: str,
+    step_index: int,
+    step_name: str,
+    *,
+    status: str = "running",
+) -> None:
+    now = datetime.utcnow().isoformat()
+    with get_connection() as conn:
+        _execute(
+            conn,
+            """
+            INSERT INTO pipeline_step_runs (
+                run_id, step_key, step_index, step_name, started_at, status
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, step_key) DO UPDATE SET
+                started_at = excluded.started_at,
+                status = excluded.status,
+                finished_at = NULL,
+                duration_seconds = NULL,
+                error_message = NULL
+            """,
+            (run_id, step_key, step_index, step_name, now, status),
+        )
+
+
+def finish_step_run(
+    run_id: int,
+    step_key: str,
+    *,
+    status: str = "success",
+    records_read: int = 0,
+    records_written: int = 0,
+    records_failed: int = 0,
+    error_message: Optional[str] = None,
+    started_at: Optional[str] = None,
+) -> None:
+    now = datetime.utcnow().isoformat()
+    duration = None
+    if started_at:
+        try:
+            start = datetime.fromisoformat(started_at.replace("Z", ""))
+            end = datetime.fromisoformat(now.replace("Z", ""))
+            duration = round((end - start).total_seconds(), 2)
+        except ValueError:
+            pass
+    with get_connection() as conn:
+        _execute(
+            conn,
+            """
+            UPDATE pipeline_step_runs SET
+                finished_at = ?,
+                duration_seconds = ?,
+                records_read = ?,
+                records_written = ?,
+                records_failed = ?,
+                status = ?,
+                error_message = ?
+            WHERE run_id = ? AND step_key = ?
+            """,
+            (
+                now, duration, records_read, records_written, records_failed,
+                status, error_message, run_id, step_key,
+            ),
+        )
+
+
+def get_step_runs_for_run(run_id: int) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = _execute(
+            conn,
+            """
+            SELECT * FROM pipeline_step_runs
+            WHERE run_id = ?
+            ORDER BY step_index ASC
+            """,
+            (run_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_pipeline_runs_history(limit: int = 20) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = _execute(
+            conn,
+            """
+            SELECT * FROM pipeline_runs
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_failed_step_runs(limit: int = 50) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = _execute(
+            conn,
+            """
+            SELECT s.*, r.service_name, r.triggered_by
+            FROM pipeline_step_runs s
+            JOIN pipeline_runs r ON r.id = s.run_id
+            WHERE s.status IN ('failed', 'partial')
+            ORDER BY COALESCE(s.finished_at, s.started_at) DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_latest_pipeline_runs_per_service() -> list[dict[str, Any]]:
     with get_connection() as conn:
         is_pg = "psycopg" in type(conn).__module__

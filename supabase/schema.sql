@@ -446,6 +446,48 @@ ALTER TABLE predictions ADD COLUMN IF NOT EXISTS completeness_flags_json TEXT;
 ALTER TABLE predictions ADD COLUMN IF NOT EXISTS validation_status TEXT DEFAULT 'valid';
 ALTER TABLE predictions ADD COLUMN IF NOT EXISTS validation_errors_json TEXT;
 
+CREATE TABLE IF NOT EXISTS pipeline_step_runs (
+    id SERIAL PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+    step_key TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    step_name TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    duration_seconds REAL,
+    records_read INTEGER DEFAULT 0,
+    records_written INTEGER DEFAULT 0,
+    records_failed INTEGER DEFAULT 0,
+    status TEXT NOT NULL,
+    error_message TEXT,
+    UNIQUE (run_id, step_key)
+);
+
+CREATE TABLE IF NOT EXISTS api_request_metrics (
+    id SERIAL PRIMARY KEY,
+    recorded_at TEXT NOT NULL,
+    method TEXT,
+    path TEXT,
+    status_code INTEGER,
+    total_ms REAL,
+    db_ms REAL,
+    serialization_ms REAL,
+    cache_hit INTEGER DEFAULT 0,
+    payload_bytes INTEGER,
+    slow INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS slow_query_log (
+    id SERIAL PRIMARY KEY,
+    recorded_at TEXT NOT NULL,
+    duration_ms REAL,
+    sql_fingerprint TEXT,
+    request_path TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_step_runs_run ON pipeline_step_runs(run_id, step_index);
+CREATE INDEX IF NOT EXISTS idx_api_metrics_path ON api_request_metrics(path, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_slow_query_recorded ON slow_query_log(recorded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pipeline_runs_service ON pipeline_runs(service_name, finished_at DESC);
 CREATE INDEX IF NOT EXISTS idx_match_cards_date ON match_cards_cache(date);
 CREATE INDEX IF NOT EXISTS idx_match_cards_status ON match_cards_cache(status);

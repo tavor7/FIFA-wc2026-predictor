@@ -61,13 +61,22 @@ class PredictionGenerationService:
             )
 
             if use_baseline:
+                reasons = []
+                if confidence.data_completeness_pct < 35:
+                    reasons.append("data completeness below 35%")
+                if confidence.confidence_pct < 25:
+                    reasons.append("confidence below 25%")
                 baseline = baseline_predict(match_row, mf, self.ensemble.elo)
-                return self._build_payload_from_baseline(match_row, mf, baseline, result)
+                return self._build_payload_from_baseline(
+                    match_row, mf, baseline, result, fallback_reason="; ".join(reasons) or "low confidence",
+                )
             return self._build_payload(match_row, mf, result, source_mode)
         except Exception as exc:
             logger.warning("Ensemble failed for %s, using baseline: %s", match_row["id"], exc)
             baseline = baseline_predict(match_row, mf, self.ensemble.elo)
-            return self._build_payload_from_baseline(match_row, mf, baseline, None)
+            return self._build_payload_from_baseline(
+                match_row, mf, baseline, None, fallback_reason=f"ensemble error: {exc}",
+            )
 
     def _resolve_source_mode(self, result: EnsembleResult, mf: Any) -> str:
         models = [m.name for m in result.models]
@@ -183,6 +192,8 @@ class PredictionGenerationService:
         mf: Any,
         baseline: dict[str, Any],
         result: Optional[EnsembleResult],
+        *,
+        fallback_reason: str = "insufficient model data",
     ) -> dict[str, Any]:
         top5 = baseline["top_scorelines"]
         best = top5[0]
@@ -211,6 +222,8 @@ class PredictionGenerationService:
             lambda_home_std=baseline["lambda_home_std"],
             lambda_away_std=baseline["lambda_away_std"],
         )
+        explanation_json["fallback_reason"] = fallback_reason
+        explanation_json["prediction_source_mode"] = baseline.get("prediction_source_mode", "baseline_only")
 
         explanation = generate_explanation(
             home_team=match_row["home_team"],
@@ -224,6 +237,12 @@ class PredictionGenerationService:
 
         contributions = feature_contributions(mf, result) if result else {}
         completeness = build_completeness_flags(mf, True, True)
+        db.upsert_feature_store(
+            match_id=int(match_row["id"]),
+            features=mf.features,
+            missing_flags=mf.missing_flags,
+            metadata=mf.metadata,
+        )
 
         payload = {
             "match_id": int(match_row["id"]),
@@ -255,6 +274,7 @@ class PredictionGenerationService:
         val_status, val_errors = validate_prediction(payload)
         payload["validation_status"] = val_status
         payload["validation_errors_json"] = val_errors
+        self.history.record(int(match_row["id"]), payload, mf.features, mf.metadata)
         return payload
 
     def generate_all(
@@ -304,8 +324,19 @@ class PredictionGenerationService:
                     )
                 generated += 1
             except Exception as exc:
-                logger.error("Prediction failed for match %s: %s", match["id"], exc)
-                errors += 1
+                logger.error("Prediction failed for match %s, forcing baseline: %s", match["id"], exc)
+                try:
+                    mf = self.features.build(match)
+                    baseline = baseline_predict(match, mf, self.ensemble.elo)
+                    pred = self._build_payload_from_baseline(
+                        match, mf, baseline, None,
+                        fallback_reason=f"prediction error: {exc}",
+                    )
+                    db.upsert_prediction(**self._upsert_kwargs(pred))
+                    generated += 1
+                except Exception as exc2:
+                    logger.error("Baseline fallback failed for match %s: %s", match["id"], exc2)
+                    errors += 1
             if progress_callback:
                 progress_callback(i + 1, total)
 
@@ -318,7 +349,7 @@ class PredictionGenerationService:
 
         from src import db_extended as ext
 
-        ext.upsert_data_freshness("predictions", 100.0, source="computed")
+        ext.upsert_data_freshness("predictions", source="computed")
 
         return {
             "matches": total,

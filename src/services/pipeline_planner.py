@@ -98,6 +98,12 @@ def ui_cache_is_fresh() -> bool:
         return False
     if teams < 40:
         return False
+    ids = _target_match_ids()
+    if ids:
+        card = pipe_db.get_match_card_cached(ids[0])
+        if card and db.get_predictions_for_match_ids([ids[0]]).get(ids[0]):
+            if card.get("home_win_prob") is None:
+                return False
     return True
 
 
@@ -192,9 +198,21 @@ def apply_skipped_progress(
     plan: dict[str, Any],
     active_indices: list[int],
 ) -> None:
-    """Mark skipped steps complete in the progress UI."""
+    """Mark skipped steps complete in the progress UI and step-run history."""
     for _key, info in plan.get("steps_skipped", {}).items():
         idx = int(info["index"])
+        step_key, step_name = PIPELINE_STEPS[idx]
+        started = datetime.utcnow().isoformat()
+        pipe_db.start_step_run(
+            run_id, step_key, idx, step_name, status="skipped",
+        )
+        pipe_db.finish_step_run(
+            run_id,
+            step_key,
+            status="skipped",
+            error_message=info.get("reason"),
+            started_at=started,
+        )
         pipe_db.update_pipeline_progress(
             run_id,
             _key,

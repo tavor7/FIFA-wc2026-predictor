@@ -6,13 +6,14 @@ import logging
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Iterator, Optional
 
 from src import db
 from src import db_extended as ext
 from src import db_pipeline as pipe_db
-from src.db_pipeline import PIPELINE_MODES, STEP_LABELS
+from src.db_pipeline import PIPELINE_MODES, PIPELINE_STEPS, STEP_LABELS
 from src.services.data_sync_service import DataSyncService
 from src.services.feature_generation_service import FeatureGenerationService
 from src.services.prediction_generation_service import PredictionGenerationService
@@ -25,6 +26,14 @@ logger = logging.getLogger(__name__)
 
 _active_run_id: Optional[int] = None
 _run_lock = threading.Lock()
+
+
+@dataclass
+class StepMetrics:
+    records_read: int = 0
+    records_written: int = 0
+    records_failed: int = 0
+
 
 class PipelineOrchestrator:
     def __init__(self, fast: bool = True):
@@ -77,7 +86,6 @@ class PipelineOrchestrator:
 
         @contextmanager
         def heartbeat(step_idx: int, step_key: str, label: str) -> Iterator[None]:
-            """Tick progress while a blocking external call runs."""
             stop = threading.Event()
             start = time.monotonic()
 
@@ -85,7 +93,6 @@ class PipelineOrchestrator:
                 tick = 0
                 while not stop.wait(2.5):
                     tick += 1
-                    elapsed = int(time.monotonic() - start)
                     fake_pct = min(88, 12 + tick * 8)
                     progress(step_idx, step_key, fake_pct, f"{label}…")
 
@@ -97,6 +104,32 @@ class PipelineOrchestrator:
             finally:
                 stop.set()
                 t.join(timeout=1)
+
+        @contextmanager
+        def track_step(step_idx: int) -> Iterator[StepMetrics]:
+            step_key, step_name = PIPELINE_STEPS[step_idx]
+            step_started = datetime.utcnow().isoformat()
+            pipe_db.start_step_run(run_id, step_key, step_idx, step_name)
+            metrics = StepMetrics()
+            step_status = "success"
+            step_error: Optional[str] = None
+            try:
+                yield metrics
+            except Exception as exc:
+                step_status = "failed"
+                step_error = str(exc)
+                raise
+            finally:
+                pipe_db.finish_step_run(
+                    run_id,
+                    step_key,
+                    status=step_status,
+                    records_read=metrics.records_read,
+                    records_written=metrics.records_written,
+                    records_failed=metrics.records_failed,
+                    error_message=step_error,
+                    started_at=step_started,
+                )
 
         try:
             apply_skipped_progress(run_id, plan, step_indices)
@@ -130,101 +163,136 @@ class PipelineOrchestrator:
                 logger.info("Pruned %d non-tournament teams", removed)
 
             if 0 in steps_to_run:
-                with heartbeat(0, "A", STEP_LABELS["A"]):
-                    r = self.sync.sync_fixtures()
-                records_written += r.get("updated", 0) or r.get("total_synced", 0)
+                with track_step(0) as sm:
+                    with heartbeat(0, "A", STEP_LABELS["A"]):
+                        r = self.sync.sync_fixtures()
+                    sm.records_read = r.get("total_synced", 0) or r.get("matches", 0) or 0
+                    sm.records_written = r.get("updated", 0) or r.get("total_synced", 0) or 0
+                    records_read += sm.records_read
+                    records_written += sm.records_written
                 progress(0, "A", 100, "Fixtures synced")
 
             if 1 in steps_to_run:
-                with heartbeat(1, "B", STEP_LABELS["B"]):
-                    r = self.sync.sync_team_stats()
-                records_written += r.get("updated", 0) or 0
+                with track_step(1) as sm:
+                    with heartbeat(1, "B", STEP_LABELS["B"]):
+                        r = self.sync.sync_team_stats()
+                    sm.records_written = r.get("updated", 0) or r.get("players", 0) or 0
+                    records_written += sm.records_written
                 progress(1, "B", 100, "Teams synced")
 
             if 2 in steps_to_run:
-                with heartbeat(2, "C", STEP_LABELS["C"]):
-                    r = self.sync.sync_injuries()
-                records_written += r.get("updated", 0) or 0
+                with track_step(2) as sm:
+                    with heartbeat(2, "C", STEP_LABELS["C"]):
+                        r = self.sync.sync_injuries()
+                    sm.records_written = r.get("updated", 0) or 0
+                    records_written += sm.records_written
                 progress(2, "C", 100, "Injuries synced")
 
             if 3 in steps_to_run:
-                with heartbeat(3, "D", STEP_LABELS["D"]):
-                    r = self.sync.sync_live()
-                records_written += r.get("updated", 0) or 0
+                with track_step(3) as sm:
+                    with heartbeat(3, "D", STEP_LABELS["D"]):
+                        r = self.sync.sync_live()
+                    sm.records_written = r.get("updated", 0) or 0
+                    records_read += sm.records_read
+                    records_written += sm.records_written
                 progress(3, "D", 100, "Live data synced")
 
             if 4 in steps_to_run:
-                if self.fast and mode == "full_pipeline":
-                    progress(4, "E", 100, "Features built during prediction step")
-                else:
-                    progress(4, "E", 0, "Generating features...")
-                    matches = self._all_target_matches()
-                    for i, m in enumerate(matches):
-                        try:
-                            self.features.build(m)
-                            records_written += 1
-                        except Exception as exc:
-                            records_failed += 1
-                            logger.warning("Feature gen failed match %s: %s", m["id"], exc)
-                        if i % 3 == 0 or i == len(matches) - 1:
-                            pct = round((i + 1) / max(len(matches), 1) * 100, 1)
-                            progress(4, "E", pct, f"Features {i + 1}/{len(matches)}")
-                    progress(4, "E", 100, f"Features for {records_written} matches")
+                with track_step(4) as sm:
+                    if self.fast and mode == "full_pipeline":
+                        progress(4, "E", 100, "Features built during prediction step")
+                    else:
+                        progress(4, "E", 0, "Generating features...")
+                        matches = self._all_target_matches()
+                        sm.records_read = len(matches)
+                        records_read += sm.records_read
+                        for i, m in enumerate(matches):
+                            try:
+                                self.features.build(m)
+                                sm.records_written += 1
+                            except Exception as exc:
+                                sm.records_failed += 1
+                                records_failed += 1
+                                logger.warning("Feature gen failed match %s: %s", m["id"], exc)
+                            if i % 3 == 0 or i == len(matches) - 1:
+                                pct = round((i + 1) / max(len(matches), 1) * 100, 1)
+                                progress(4, "E", pct, f"Features {i + 1}/{len(matches)}")
+                        records_written += sm.records_written
+                        progress(4, "E", 100, f"Features for {sm.records_written} matches")
 
             if 5 in steps_to_run:
-                progress(5, "F", 50, "Validating features...")
-                progress(5, "F", 100, "Feature validation complete")
+                with track_step(5):
+                    progress(5, "F", 50, "Validating features...")
+                    progress(5, "F", 100, "Feature validation complete")
 
+            predictions_generated = 0
             if 6 in steps_to_run:
-                progress(6, "G", 0, "Generating predictions...")
-                matches = self._all_target_matches()
-                total = len(matches)
+                with track_step(6) as sm:
+                    progress(6, "G", 0, "Generating predictions...")
+                    matches = self._all_target_matches()
+                    sm.records_read = len(matches)
+                    records_read += sm.records_read
 
-                def pred_progress(i: int, total_n: int) -> None:
-                    pct = round(i / max(total_n, 1) * 100, 1)
-                    progress(6, "G", pct, f"Predictions {i}/{total_n} matches")
+                    def pred_progress(i: int, total_n: int) -> None:
+                        pct = round(i / max(total_n, 1) * 100, 1)
+                        progress(6, "G", pct, f"Predictions {i}/{total_n} matches")
 
-                result = self.predictions.generate_all(
-                    limit=500,
-                    progress_callback=pred_progress,
-                    run_simulation=not self.fast and not skip_completed,
-                    only_missing=skip_completed,
-                )
-                records_written += result.get("generated", 0)
-                records_failed += result.get("errors", 0)
-                n_gen = result.get("generated", 0)
+                    result = self.predictions.generate_all(
+                        limit=500,
+                        progress_callback=pred_progress,
+                        run_simulation=not self.fast and not skip_completed,
+                        only_missing=skip_completed,
+                    )
+                    sm.records_written = result.get("generated", 0)
+                    sm.records_failed = result.get("errors", 0)
+                    predictions_generated = sm.records_written
+                    records_written += sm.records_written
+                    records_failed += sm.records_failed
                 progress(
                     6, "G", 100,
-                    f"Generated {n_gen} predictions" if n_gen else "Predictions already complete",
+                    f"Generated {predictions_generated} predictions"
+                    if predictions_generated
+                    else "Predictions already complete",
                 )
+                if predictions_generated > 0 and 9 not in steps_to_run:
+                    steps_to_run.add(9)
+                    logger.info("Forcing UI cache refresh after %d new predictions", predictions_generated)
 
             if 7 in steps_to_run:
-                progress(7, "H", 0, "Validating predictions...")
-                invalid = 0
-                import json
+                with track_step(7) as sm:
+                    progress(7, "H", 0, "Validating predictions...")
+                    import json
 
-                target_ids = [int(m["id"]) for m in self._all_target_matches()]
-                pred_map = db.get_predictions_for_match_ids(target_ids) if target_ids else {}
-                for p in pred_map.values():
-                    pd = dict(p)
-                    if pd.get("top_scorelines_json"):
-                        pd["top_scorelines"] = json.loads(pd["top_scorelines_json"])
-                    st, _errs = validate_prediction(pd)
-                    if st == "invalid":
-                        invalid += 1
+                    target_ids = [int(m["id"]) for m in self._all_target_matches()]
+                    sm.records_read = len(target_ids)
+                    records_read += sm.records_read
+                    pred_map = db.get_predictions_for_match_ids(target_ids) if target_ids else {}
+                    invalid = 0
+                    for p in pred_map.values():
+                        pd = dict(p)
+                        if pd.get("top_scorelines_json"):
+                            pd["top_scorelines"] = json.loads(pd["top_scorelines_json"])
+                        st, _errs = validate_prediction(pd)
+                        if st == "invalid":
+                            invalid += 1
+                    sm.records_failed = invalid
+                    records_failed += invalid
                 progress(7, "H", 100, f"Validation done ({invalid} invalid)")
 
             if 8 in steps_to_run:
-                progress(8, "I", 100, "Explanations embedded in predictions")
+                with track_step(8):
+                    progress(8, "I", 100, "Explanations embedded in predictions")
 
             if 9 in steps_to_run:
-                progress(9, "J", 0, "Refreshing UI cache...")
+                with track_step(9) as sm:
+                    progress(9, "J", 0, "Refreshing UI cache...")
 
-                def cache_progress(pct: float, msg: str) -> None:
-                    progress(9, "J", pct, msg)
+                    def cache_progress(pct: float, msg: str) -> None:
+                        progress(9, "J", pct, msg)
 
-                cache_result = self.ui_cache.refresh_all(progress_cb=cache_progress)
-                records_written += cache_result.get("match_cards", 0)
+                    cache_result = self.ui_cache.refresh_all(progress_cb=cache_progress)
+                    sm.records_written = cache_result.get("match_cards", 0)
+                    records_written += sm.records_written
                 progress(9, "J", 100, "UI cache refreshed")
 
         except Exception as exc:

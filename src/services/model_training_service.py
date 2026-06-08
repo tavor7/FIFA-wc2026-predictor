@@ -29,4 +29,17 @@ class ModelTrainingService:
         from src.services.prediction_generation_service import PredictionGenerationService
 
         pred_result = PredictionGenerationService(ensemble=self.ensemble).generate_all()
-        return {"training": train_result, "model_version": version, "weights": weights, "predictions": pred_result}
+        backtest_metrics = None
+        try:
+            from src.evaluation.backtest import backtest_tournament
+
+            backtest_metrics = backtest_tournament(league_filter="World Cup", limit=500)
+        except Exception as exc:
+            logger.warning("Post-retrain backtest skipped: %s", exc)
+        return {
+            "training": train_result,
+            "model_version": version,
+            "weights": weights,
+            "predictions": pred_result,
+            "backtest": backtest_metrics,
+        }
