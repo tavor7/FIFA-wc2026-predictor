@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from src import db
 from src import db_extended as ext
@@ -20,7 +20,20 @@ LIVE_STATUSES = ("1H", "2H", "HT", "ET", "BT", "P", "LIVE", "IN_PLAY", "PAUSED")
 
 
 class UICacheService:
-    def refresh_all(self, progress_cb: Optional[Any] = None) -> dict[str, Any]:
+    def refresh_all(
+        self,
+        progress_cb: Optional[Callable[[float, str], None]] = None,
+        *,
+        fast: bool = True,
+        should_cancel: Optional[Callable[[], bool]] = None,
+    ) -> dict[str, Any]:
+        from src.services.pipeline_cancel import PipelineCancelled
+
+        def report(pct: float, msg: str) -> None:
+            if progress_cb:
+                progress_cb(pct, msg)
+
+        report(1, "Preparing UI cache…")
         written = 0
         pipe_db.clear_match_cards_cache()
         pipe_db.clear_team_cards_cache()
@@ -38,8 +51,11 @@ class UICacheService:
 
         ids = [int(m["id"]) for m in all_matches]
         pred_map = db.get_predictions_for_match_ids(ids) if ids else {}
+        total = len(all_matches)
 
         for i, m in enumerate(all_matches):
+            if should_cancel and should_cancel():
+                raise PipelineCancelled()
             mid = int(m["id"])
             pred = dict(pred_map[mid]) if mid in pred_map else None
             home_meta = team_meta(m["home_team"])
@@ -47,17 +63,23 @@ class UICacheService:
             card = self._match_to_card(m, pred, home_meta, away_meta)
             pipe_db.upsert_match_card_cache(card)
             written += 1
-            if progress_cb and i % 10 == 0:
-                pct = round(i / max(len(all_matches), 1) * 100, 1)
-                progress_cb(pct, f"Building match cards {i}/{len(all_matches)}")
+            if i % 5 == 0 or i == total - 1:
+                pct = round((i + 1) / max(total, 1) * 70, 1)
+                report(pct, f"Match cards {i + 1}/{total}")
 
-        teams_written = self._refresh_team_cards(progress_cb)
+        teams_written = self._refresh_team_cards(
+            progress_cb=lambda p, msg: report(70 + p * 0.25, msg),
+            fast=fast,
+            should_cancel=should_cancel,
+        )
+        report(96, "Building home cache…")
         home_payload = self._build_home_payload(all_matches, pred_map)
         pipe_db.upsert_home_view_cache(home_payload)
 
         computed = datetime.utcnow().isoformat()
         set_cache_meta(data_version=computed, last_prediction_update=computed)
         invalidate_all()
+        report(100, "UI cache ready")
 
         return {
             "match_cards": written,
@@ -113,17 +135,57 @@ class UICacheService:
             "last_prediction_update": pred.get("generated_at") if pred else None,
         }
 
-    def _refresh_team_cards(self, progress_cb: Optional[Any] = None) -> int:
+    def _refresh_team_cards(
+        self,
+        progress_cb: Optional[Callable[[float, str], None]] = None,
+        *,
+        fast: bool = True,
+        should_cancel: Optional[Callable[[], bool]] = None,
+    ) -> int:
+        from src.services.pipeline_cancel import PipelineCancelled
+
+        teams = ext.get_tournament_teams()
+        written = 0
+        total = len(teams)
+
+        if fast:
+            for i, t in enumerate(teams):
+                if should_cancel and should_cancel():
+                    raise PipelineCancelled()
+                d = dict(t)
+                name = d["name"]
+                injuries = db.get_injuries_for_teams([name])
+                meta = team_meta(name)
+                players = ext.get_squad_players(int(d["id"])) if d.get("id") else []
+                ratings = [dict(p).get("rating") for p in players if dict(p).get("rating")]
+                avg_rating = sum(ratings) / len(ratings) if ratings else None
+                pipe_db.upsert_team_card_cache({
+                    "team_id": int(d["id"]),
+                    "name": name,
+                    "slug": d.get("slug") or meta["slug"],
+                    "flag_url": meta["flag_url"],
+                    "group_name": self._team_group(name),
+                    "rating": avg_rating,
+                    "recent_form": None,
+                    "injury_count": len(injuries),
+                    "momentum_score": None,
+                })
+                written += 1
+                if progress_cb and (i % 4 == 0 or i == total - 1):
+                    pct = round((i + 1) / max(total, 1) * 100, 1)
+                    progress_cb(pct, f"Team cards {i + 1}/{total}")
+            return written
+
         from src.analytics.momentum import MomentumEngine
         from src.analytics.team_form import TeamFormAnalyzer
 
-        teams = ext.get_tournament_teams()
         form_analyzer = TeamFormAnalyzer()
         momentum_engine = MomentumEngine()
         now = datetime.utcnow().isoformat()
-        written = 0
 
         for i, t in enumerate(teams):
+            if should_cancel and should_cancel():
+                raise PipelineCancelled()
             d = dict(t)
             name = d["name"]
             injuries = db.get_injuries_for_teams([name])
@@ -147,10 +209,10 @@ class UICacheService:
                 "momentum_score": mom.score,
             })
             written += 1
-            if progress_cb and i % 5 == 0:
+            if progress_cb and (i % 5 == 0 or i == total - 1):
                 progress_cb(
-                    round(i / max(len(teams), 1) * 100, 1),
-                    f"Building team cards {i}/{len(teams)}",
+                    round((i + 1) / max(total, 1) * 100, 1),
+                    f"Team cards {i + 1}/{total}",
                 )
         return written
 

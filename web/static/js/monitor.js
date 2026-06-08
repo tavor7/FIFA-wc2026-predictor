@@ -155,12 +155,16 @@ export async function pageMonitorOverview() {
   } else if (last.status) {
     pipelineLine = `${escapeHtml(last.service_name || "pipeline")} · ${escapeHtml(last.status)}` +
       (last.finished_at ? ` · ${formatDateIsrael(last.finished_at)}` : "");
+    if (last.error_message) {
+      pipelineLine += ` · ${escapeHtml(last.error_message)}`;
+    }
   }
 
   return (
     pageHeaderHtml("System health", "Data, predictions, model weights & gaps") +
     adminPanelHtml() +
     progressBarHtml("pipeline-progress") +
+    progressBarHtml("retrain-progress", { phaseLabel: "Starting model training…", showCancel: false }) +
     `<div class="metric-grid">
       ${metricCard("Database", status.database_connected ? "Connected" : "Down", status.database_connected ? "ok" : "bad")}
       ${metricCard("Matches", status.matches_count ?? 0)}

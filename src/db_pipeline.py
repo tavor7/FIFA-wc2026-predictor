@@ -48,7 +48,7 @@ PIPELINE_MODES: dict[str, list[int]] = {
     "full_pipeline": list(range(10)),
     "data_sync_only": [0, 1, 2, 3],
     "features_only": [4, 5],
-    "predictions_only": [6, 7, 8, 9],
+    "predictions_only": [6, 9],
 }
 
 MODE_LABELS: dict[str, str] = {
@@ -124,7 +124,7 @@ def get_all_active_pipeline_run_ids() -> list[int]:
     return [int(dict(r)["id"]) for r in rows]
 
 
-def cleanup_stale_pipeline_runs(max_age_seconds: int = 7200) -> int:
+def cleanup_stale_pipeline_runs(max_age_seconds: int = 900) -> int:
     """Force-finish orphaned runs older than max_age_seconds."""
     cleared = 0
     now = datetime.utcnow()
@@ -303,7 +303,7 @@ def is_pipeline_cancel_requested(run_id: int) -> bool:
 
 
 def get_active_pipeline_progress() -> Optional[dict[str, Any]]:
-    cleanup_stale_pipeline_runs(max_age_seconds=7200)
+    cleanup_stale_pipeline_runs(max_age_seconds=900)
     with get_connection() as conn:
         row = _execute(
             conn,

@@ -236,7 +236,7 @@ def get_monitor_screen() -> dict[str, Any]:
         "deployment": {
             "app_start_time": _app_start_time,
             "database_latency_ms": db_ping_ms,
-            "scheduler_enabled": os.getenv("ENABLE_SCHEDULER", "true").lower() in ("1", "true", "yes"),
+            "scheduler_enabled": os.getenv("ENABLE_SCHEDULER", "false").lower() in ("1", "true", "yes"),
             "last_scheduler_heartbeat": _scheduler_heartbeat,
             "app_version": config.APP_VERSION,
             "git_commit": config.GIT_COMMIT,

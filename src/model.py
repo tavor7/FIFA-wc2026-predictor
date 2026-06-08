@@ -16,6 +16,8 @@ from src.features import MatchFeatures, build_training_dataset
 
 logger = logging.getLogger(__name__)
 
+TrainingDataset = tuple[np.ndarray, np.ndarray, np.ndarray, list[int], list[float]]
+
 
 class GoalPredictionModel:
     """Dual RandomForest regressors with Poisson scoreline distribution."""
@@ -35,9 +37,17 @@ class GoalPredictionModel:
         )
         self._is_trained = False
 
-    def train_model(self, min_samples: int = 10) -> dict[str, Any]:
+    def train_model(
+        self,
+        min_samples: int = 10,
+        *,
+        dataset: Optional[TrainingDataset] = None,
+    ) -> dict[str, Any]:
         """Train on finished matches in the database."""
-        X, y_home, y_away, match_ids, sample_weights = build_training_dataset()
+        if dataset is None:
+            X, y_home, y_away, match_ids, sample_weights = build_training_dataset()
+        else:
+            X, y_home, y_away, match_ids, sample_weights = dataset
 
         if len(X) < min_samples:
             logger.warning(

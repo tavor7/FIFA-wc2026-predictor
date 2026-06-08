@@ -18,7 +18,7 @@ from src.services.data_sync_service import DataSyncService
 from src.services.feature_generation_service import FeatureGenerationService
 from src.services.prediction_generation_service import PredictionGenerationService
 from src.services.prediction_validation_service import validate_prediction
-from src.services.pipeline_cancel import PipelineCancelled
+from src.services.pipeline_cancel import PipelineCancelled, _PipelineCompleteEarly
 from src.services.pipeline_planner import apply_skipped_progress, plan_pipeline_steps
 from src.services.ui_cache_service import UICacheService
 from src.cache.response_cache import invalidate_all
@@ -256,14 +256,18 @@ class PipelineOrchestrator:
                     100,
                     "All steps up to date — nothing to run",
                 )
+                raise _PipelineCompleteEarly()
             elif steps_to_run:
                 first = min(steps_to_run)
+                first_key = PIPELINE_STEPS[first][0]
+                skip_note = ""
+                if plan.get("skip_count"):
+                    skip_note = f" ({plan['skip_count']} step(s) already done)"
                 progress(
                     first,
-                    PIPELINE_STEPS[first][0],
-                    5,
-                    f"Running {plan['run_count']} of {len(step_indices)} steps "
-                    f"({plan['skip_count']} already done)",
+                    first_key,
+                    0,
+                    f"Starting {STEP_LABELS[first_key]}{skip_note}",
                 )
 
             removed = ext.prune_non_tournament_teams()
@@ -347,9 +351,18 @@ class PipelineOrchestrator:
 
             if 5 in steps_to_run:
                 _between_steps()
-                with track_step(5):
-                    progress(5, "F", 50, "Validating features...")
-                    progress(5, "F", 100, "Feature validation complete")
+                with track_step(5) as sm:
+                    progress(5, "F", 0, "Validating features...")
+                    ids = [int(m["id"]) for m in self._all_target_matches()]
+                    sm.records_read = len(ids)
+                    missing_fs = sum(1 for mid in ids if not db.get_feature_store(mid))
+                    sm.records_failed = missing_fs
+                    records_failed += missing_fs
+                    progress(
+                        5, "F", 100,
+                        f"Feature store {len(ids) - missing_fs}/{len(ids)} matches"
+                        if ids else "No target matches",
+                    )
 
             predictions_generated = 0
             if 6 in steps_to_run:
@@ -423,11 +436,17 @@ class PipelineOrchestrator:
                     def cache_progress(pct: float, msg: str) -> None:
                         progress(9, "J", pct, msg)
 
-                    cache_result = self.ui_cache.refresh_all(progress_cb=cache_progress)
+                    cache_result = self.ui_cache.refresh_all(
+                        progress_cb=cache_progress,
+                        fast=self.fast,
+                        should_cancel=cancel_fn,
+                    )
                     sm.records_written = cache_result.get("match_cards", 0)
                     records_written += sm.records_written
                 progress(9, "J", 100, "UI cache refreshed")
 
+        except _PipelineCompleteEarly:
+            logger.info("Pipeline run %s — all steps already up to date", run_id)
         except PipelineCancelled:
             status = "cancelled"
             error_message = "Cancelled by user"
@@ -493,6 +512,7 @@ def run_pipeline_async(
     with _run_lock:
         if _active_run_id is not None:
             return _active_run_id
+        pipe_db.cleanup_stale_pipeline_runs(max_age_seconds=900)
         existing = pipe_db.get_active_pipeline_run_id()
         if existing is not None:
             return existing

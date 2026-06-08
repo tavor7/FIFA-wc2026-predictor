@@ -159,10 +159,14 @@ def _step_skip_reasons(mode: str, *, fast: bool = True) -> dict[int, str]:
             skip[6] = f"predictions up to date ({counts.get('predictions', 0)} stored)"
 
     if 7 in all_steps and 6 in skip:
-        skip[7] = "predictions already validated"
+        empty_expl = db.count_empty_explanations()
+        if empty_expl == 0:
+            skip[7] = "predictions already validated"
 
     if 8 in all_steps and 6 in skip:
-        skip[8] = "explanations already in predictions"
+        empty_expl = db.count_empty_explanations()
+        if empty_expl == 0:
+            skip[8] = "explanations already in predictions"
 
     if 9 in all_steps and ui_cache_is_fresh():
         skip[9] = "UI cache is fresh"
@@ -198,7 +202,7 @@ def apply_skipped_progress(
     plan: dict[str, Any],
     active_indices: list[int],
 ) -> None:
-    """Mark skipped steps complete in the progress UI and step-run history."""
+    """Record skipped steps in step-run history (UI progress updated separately)."""
     for _key, info in plan.get("steps_skipped", {}).items():
         idx = int(info["index"])
         step_key, step_name = PIPELINE_STEPS[idx]
@@ -212,12 +216,4 @@ def apply_skipped_progress(
             status="skipped",
             error_message=info.get("reason"),
             started_at=started,
-        )
-        pipe_db.update_pipeline_progress(
-            run_id,
-            _key,
-            idx,
-            100.0,
-            f"Skipped — {info['reason']}",
-            active_step_indices=active_indices,
         )

@@ -1,6 +1,7 @@
 import {
-  request, loadFreshness, lastResponseMeta, adminLogin, getAdminToken,
+  request, loadFreshness, lastResponseMeta, adminLogin, getAdminToken, setAdminToken,
   verifyAdminSession, pollPipelineProgress, abortPipelinePolling,
+  pollRetrainProgress, abortRetrainPolling, cacheBust,
 } from "./js/api.js";
 import { freshnessBarHtml, skeletonCardsHtml, setMonitorControlsLocked } from "./js/components.js";
 import {
@@ -22,6 +23,7 @@ let activeRoute = "matches";
 let pageMeta = {};
 let pipelineCancelRequested = false;
 let monitorPipelineActive = false;
+let monitorRetrainActive = false;
 
 const ROUTES = [
   { pattern: /^\/team\/([^/]+)$/, name: "team", handler: ([, slug]) => pageTeam(slug) },
@@ -86,7 +88,16 @@ function showAdminModalError(msg) {
 
 function pipelineFinished() {
   monitorPipelineActive = false;
-  setMonitorControlsLocked(false);
+  if (!monitorRetrainActive) setMonitorControlsLocked(false);
+}
+
+function retrainFinished() {
+  monitorRetrainActive = false;
+  if (!monitorPipelineActive) setMonitorControlsLocked(false);
+}
+
+function monitorIsBusy() {
+  return monitorPipelineActive || monitorRetrainActive;
 }
 
 async function updateFreshnessBar() {
@@ -107,7 +118,13 @@ async function updateFreshnessBar() {
   }
 }
 
+let livePollTimer = null;
+
 async function navigate() {
+  if (livePollTimer) {
+    clearInterval(livePollTimer);
+    livePollTimer = null;
+  }
   const { name, handler, match } = parseHash();
   activeRoute = name;
   setActiveNav(name === "team" || name === "match" ? "matches" : name);
@@ -130,8 +147,14 @@ async function navigate() {
     const html = await handler(match);
     content.innerHTML = html;
     void updateFreshnessBar();
-    if (name === "monitor" && !monitorPipelineActive) {
+    if (name === "live") {
+      livePollTimer = setInterval(() => {
+        if (activeRoute === "live") void navigate();
+      }, 30000);
+    }
+    if (name === "monitor" && !monitorIsBusy()) {
       void resumePipelineProgressIfRunning();
+      void resumeRetrainProgressIfRunning();
     }
   } catch (e) {
     showError(e.message || "Failed to load page");
@@ -191,7 +214,7 @@ async function ensureAdminAuth() {
 }
 
 async function adminReloadPlayers() {
-  if (monitorPipelineActive) return;
+  if (monitorIsBusy()) return;
   const btn = document.querySelector("#btn-admin-players");
   if (btn) {
     btn.disabled = true;
@@ -203,7 +226,7 @@ async function adminReloadPlayers() {
   } catch (e) {
     showError(e.message || "Squad reload failed");
   } finally {
-    if (btn && !monitorPipelineActive) {
+    if (btn && !monitorIsBusy()) {
       btn.disabled = false;
       btn.textContent = "Reload Kaggle squads";
     }
@@ -211,22 +234,36 @@ async function adminReloadPlayers() {
 }
 
 async function adminRefreshPredictions() {
-  if (monitorPipelineActive) return;
+  if (monitorIsBusy()) return;
   const btn = document.querySelector("#btn-admin-predict");
   if (btn) {
     btn.disabled = true;
     btn.textContent = "Refreshing…";
   }
   try {
-    await request("/admin/predictions/refresh", { method: "POST" });
+    const data = await request("/admin/predictions/refresh", { method: "POST" });
+    cacheBust();
+    showError(null);
+    if (btn) btn.textContent = "Running in background…";
+    await new Promise((r) => setTimeout(r, 8000));
     await navigate();
   } catch (e) {
     showError(e.message || "Prediction refresh failed");
   } finally {
-    if (btn && !monitorPipelineActive) {
+    if (btn && !monitorIsBusy()) {
       btn.disabled = false;
       btn.textContent = "Refresh predictions";
     }
+  }
+}
+
+function adminLogout() {
+  setAdminToken(null);
+  cacheBust();
+  if (location.hash.includes("monitor")) {
+    location.hash = "#/";
+  } else {
+    navigate();
   }
 }
 
@@ -287,8 +324,10 @@ async function adminCancelPipeline() {
 }
 
 async function adminRunPipeline(mode) {
-  if (monitorPipelineActive) {
-    showError("A pipeline is already running. Cancel it first.");
+  if (monitorIsBusy()) {
+    showError(monitorRetrainActive
+      ? "Model training is running. Wait for it to finish."
+      : "A pipeline is already running. Cancel it first.");
     return;
   }
 
@@ -342,6 +381,10 @@ async function adminRunPipeline(mode) {
         elapsed_seconds: result?.elapsed_seconds,
         message: "Pipeline complete",
       });
+      cacheBust();
+      if (activeRoute === "monitor") {
+        await navigate();
+      }
     }
   } catch (e) {
     const msg = e.message || "Pipeline run failed";
@@ -358,6 +401,80 @@ async function adminRunPipeline(mode) {
   }
 }
 
+async function adminRetrainModels() {
+  if (monitorIsBusy()) {
+    showError(monitorPipelineActive
+      ? "A pipeline is running — wait or cancel it first."
+      : "Model training is already in progress.");
+    return;
+  }
+
+  abortRetrainPolling();
+  monitorRetrainActive = true;
+  setMonitorControlsLocked(true);
+
+  const { updateProgressBar } = await import("./js/components.js");
+  const panel = document.getElementById("retrain-progress");
+  if (panel) panel.classList.remove("hidden");
+
+  try {
+    await request("/admin/model/retrain", { method: "POST" });
+    updateProgressBar("retrain-progress", {
+      running: true,
+      mode_label: "Model training",
+      overall_progress_pct: 2,
+      step_label: "Starting",
+      message: "Training Random Forest, XGBoost, and Elo…",
+      step_number: 1,
+      steps_total: 8,
+    });
+
+    const result = await pollRetrainProgress((p) => updateProgressBar("retrain-progress", p));
+
+    if (result?.aborted) return;
+
+    if (result?.status === "failed" || result?.error) {
+      updateProgressBar("retrain-progress", {
+        running: false,
+        failed: true,
+        mode_label: "Model training",
+        overall_progress_pct: result.overall_progress_pct ?? 0,
+        elapsed_seconds: result.elapsed_seconds,
+        error: result.error || result.message,
+        step_label: result.step_label,
+      });
+      showError(result.error || "Model training failed");
+      return;
+    }
+
+    if (result?.error && !result?.running) {
+      showError(`Training polling lost connection: ${result.error}`);
+      return;
+    }
+
+    updateProgressBar("retrain-progress", {
+      running: false,
+      mode_label: "Model training",
+      overall_progress_pct: 100,
+      elapsed_seconds: result?.elapsed_seconds,
+      model_version: result?.model_version,
+      message: result?.message || "Training complete — reloading…",
+    });
+    await navigate();
+  } catch (e) {
+    const msg = e.message || "Model training failed";
+    if (e.status === 409 || msg.toLowerCase().includes("already")) {
+      showError(msg);
+    } else if (msg.toLowerCase().includes("authentication")) {
+      showError("Admin session expired — sign in again from Monitor.");
+    } else {
+      showError(msg);
+    }
+  } finally {
+    retrainFinished();
+  }
+}
+
 window.addEventListener("hashchange", navigate);
 
 document.addEventListener("click", (e) => {
@@ -366,12 +483,35 @@ document.addEventListener("click", (e) => {
       e.target.closest("[data-pipeline-mode]") ||
       e.target.closest("#btn-admin-predict") ||
       e.target.closest("#btn-admin-players") ||
+      e.target.closest("#btn-admin-retrain") ||
       e.target.closest("#btn-repair-predictions");
     if (blocked) {
       e.preventDefault();
       showError("Wait for the current pipeline to finish or click Cancel.");
       return;
     }
+  }
+  if (monitorRetrainActive) {
+    const blocked =
+      e.target.closest("[data-pipeline-mode]") ||
+      e.target.closest("#btn-admin-predict") ||
+      e.target.closest("#btn-admin-players") ||
+      e.target.closest("#btn-admin-retrain") ||
+      e.target.closest("#btn-repair-predictions");
+    if (blocked) {
+      e.preventDefault();
+      showError("Wait for model training to finish.");
+      return;
+    }
+  }
+
+  if (e.target.closest("#btn-admin-logout")) {
+    e.preventDefault();
+    adminLogout();
+  }
+  if (e.target.closest("#btn-admin-retrain")) {
+    e.preventDefault();
+    adminRetrainModels();
   }
 
   if (e.target.closest("#btn-admin-predict")) {
@@ -398,7 +538,7 @@ document.addEventListener("click", (e) => {
 });
 
 async function adminRepairPredictions() {
-  if (monitorPipelineActive) return;
+  if (monitorIsBusy()) return;
   const btn = document.querySelector("#btn-repair-predictions");
   if (btn) {
     btn.disabled = true;
@@ -411,7 +551,7 @@ async function adminRepairPredictions() {
   } catch (err) {
     showError(err.message || "Repair failed");
   } finally {
-    if (btn && !monitorPipelineActive) {
+    if (btn && !monitorIsBusy()) {
       btn.disabled = false;
       btn.textContent = "Repair missing predictions";
     }
@@ -433,7 +573,7 @@ nav?.addEventListener("click", (e) => {
 
 async function resumePipelineProgressIfRunning() {
   if (activeRoute !== "monitor" || !(await verifyAdminSession())) return;
-  if (monitorPipelineActive) return;
+  if (monitorIsBusy()) return;
 
   try {
     const { updateProgressBar } = await import("./js/components.js");
@@ -463,12 +603,59 @@ async function resumePipelineProgressIfRunning() {
         elapsed_seconds: result?.elapsed_seconds,
         message: "Pipeline complete",
       });
+      cacheBust();
+      if (activeRoute === "monitor") {
+        await navigate();
+      }
     }
   } catch {
     /* ignore */
   } finally {
     pipelineFinished();
     pipelineCancelRequested = false;
+  }
+}
+
+async function resumeRetrainProgressIfRunning() {
+  if (activeRoute !== "monitor" || !(await verifyAdminSession())) return;
+  if (monitorIsBusy()) return;
+
+  try {
+    const { updateProgressBar } = await import("./js/components.js");
+    const data = await request("/admin/model/retrain/progress", { noCache: true });
+    if (!data?.running) return;
+
+    monitorRetrainActive = true;
+    setMonitorControlsLocked(true);
+    updateProgressBar("retrain-progress", data);
+
+    const result = await pollRetrainProgress((p) => updateProgressBar("retrain-progress", p));
+    if (result?.aborted) return;
+
+    if (result?.status === "failed") {
+      updateProgressBar("retrain-progress", {
+        running: false,
+        failed: true,
+        mode_label: "Model training",
+        overall_progress_pct: result.overall_progress_pct ?? data.overall_progress_pct ?? 0,
+        elapsed_seconds: result.elapsed_seconds ?? data.elapsed_seconds,
+        error: result.error,
+        step_label: result.step_label,
+      });
+    } else if (!result?.running && (result?.overall_progress_pct ?? 0) >= 99) {
+      updateProgressBar("retrain-progress", {
+        running: false,
+        mode_label: "Model training",
+        overall_progress_pct: 100,
+        elapsed_seconds: result?.elapsed_seconds,
+        model_version: result?.model_version,
+        message: result?.message || "Training complete",
+      });
+    }
+  } catch {
+    /* ignore */
+  } finally {
+    retrainFinished();
   }
 }
 

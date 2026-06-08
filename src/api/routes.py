@@ -613,6 +613,7 @@ def admin_pipeline_cancel(
 def admin_pipeline_busy() -> dict[str, Any]:
     from src.services.pipeline_orchestrator import pipeline_is_busy, is_scheduler_suppressed
 
+    pipe_db.cleanup_stale_pipeline_runs(max_age_seconds=900)
     return {
         "busy": pipeline_is_busy(),
         "scheduler_suppressed": is_scheduler_suppressed(),
@@ -641,12 +642,18 @@ def admin_pipeline_run(
         raise HTTPException(status_code=400, detail="Invalid pipeline mode")
     from src.services.pipeline_planner import plan_pipeline_steps
     from src.services.pipeline_orchestrator import pipeline_is_busy, run_pipeline_async
+    from src.services.model_training_runner import model_training_is_busy
 
     if pipeline_is_busy():
         active = pipe_db.get_active_pipeline_run_id()
         raise HTTPException(
             status_code=409,
             detail=f"A pipeline is already running (run #{active}). Cancel it first.",
+        )
+    if model_training_is_busy():
+        raise HTTPException(
+            status_code=409,
+            detail="Model training is in progress. Wait for it to finish.",
         )
 
     plan = plan_pipeline_steps(mode, fast=True) if not force else {"force_all_steps": True}
@@ -720,11 +727,14 @@ def admin_refresh_predictions(bg: BackgroundTasks, _auth: None = Depends(require
     def _job() -> None:
         try:
             PredictionGenerationService().generate_all()
+            from src.services.ui_cache_service import UICacheService
+
+            UICacheService().refresh_all(fast=True)
         finally:
             invalidate_all()
 
     bg.add_task(_job)
-    return {"status": "started", "message": "Regenerating all predictions in background"}
+    return {"status": "started", "message": "Regenerating predictions and UI cache in background (~2–5 min)"}
 
 
 @router.post("/predictions/generate")
@@ -743,7 +753,25 @@ def gen_predictions(
 
 @router.post("/model/retrain")
 def retrain(_auth: None = Depends(require_admin)) -> dict[str, Any]:
+    """Synchronous retrain (scripts / Streamlit). Monitor UI uses POST /admin/model/retrain."""
     return ModelTrainingService().retrain_and_predict()
+
+
+@router.post("/admin/model/retrain")
+def admin_model_retrain(_auth: None = Depends(require_admin)) -> dict[str, Any]:
+    from src.services.model_training_runner import start_model_retrain_async
+
+    result = start_model_retrain_async()
+    if result.get("status") == "busy":
+        raise HTTPException(status_code=409, detail=result.get("message", "Training already running"))
+    return result
+
+
+@router.get("/admin/model/retrain/progress")
+def admin_model_retrain_progress() -> dict[str, Any]:
+    from src.services.model_training_runner import get_model_training_progress
+
+    return get_model_training_progress()
 
 
 @router.get("/evaluation/calibration")

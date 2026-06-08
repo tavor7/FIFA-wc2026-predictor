@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 
@@ -202,7 +202,7 @@ def _lineup_strength(match_id: int, team: str) -> tuple[float, bool, str]:
         return float(np.mean(strengths)), False, "confirmed_lineup"
     fc26_strength, source = _fc26_expected_xi_strength(team)
     if source == "player_ratings_fc26":
-        return fc26_strength, True, source
+        return fc26_strength, False, source
     return 0.55, True, "heuristic_default"
 
 
@@ -210,8 +210,7 @@ def _injury_impact(team: str) -> tuple[int, float, bool]:
     """Count injuries and xG impact from injury analytics engine."""
     report = estimate_team_injury_xg(team)
     count = int(report.get("injured_count", 0))
-    if count == 0:
-        return 0, 0.0, True
+    # Zero injuries is valid data (synced or none reported), not missing.
     return count, float(report.get("total_xg_impact", 0.0)), False
 
 
@@ -288,17 +287,19 @@ def build_features_for_match(match_row: Any, for_training: bool = False) -> Matc
     missing["rest_days_diff"] = miss_rh or miss_ra
 
     if for_training:
-        mf.features["injured_players_home_count"] = 0.0
-        mf.features["injured_players_away_count"] = 0.0
-        mf.features["injured_key_players_home_score"] = 0.0
-        mf.features["injured_key_players_away_score"] = 0.0
-        missing["injured_players_home_count"] = True
-        missing["injured_players_away_count"] = True
-        missing["injured_key_players_home_score"] = True
-        missing["injured_key_players_away_score"] = True
-        meta_extra["injuries_home"] = 0
-        meta_extra["injuries_away"] = 0
-        meta_extra["injury_source"] = "excluded_for_training"
+        inj_h_count, inj_h_score, _ = _injury_impact(home)
+        inj_a_count, inj_a_score, _ = _injury_impact(away)
+        mf.features["injured_players_home_count"] = float(inj_h_count)
+        mf.features["injured_players_away_count"] = float(inj_a_count)
+        mf.features["injured_key_players_home_score"] = inj_h_score
+        mf.features["injured_key_players_away_score"] = inj_a_score
+        missing["injured_players_home_count"] = False
+        missing["injured_players_away_count"] = False
+        missing["injured_key_players_home_score"] = False
+        missing["injured_key_players_away_score"] = False
+        meta_extra["injuries_home"] = inj_h_count
+        meta_extra["injuries_away"] = inj_a_count
+        meta_extra["injury_source"] = "historical_training"
     else:
         inj_h_count, inj_h_score, miss_ih = _injury_impact(home)
         inj_a_count, inj_a_score, miss_ia = _injury_impact(away)
@@ -361,7 +362,9 @@ def build_features_for_match(match_row: Any, for_training: bool = False) -> Matc
     return mf
 
 
-def build_training_dataset() -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int], list[float]]:
+def build_training_dataset(
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int], list[float]]:
     """
     Build feature matrix and target vectors from finished matches.
     Returns X, y_home, y_away, match_ids, sample_weights.
@@ -374,12 +377,15 @@ def build_training_dataset() -> tuple[np.ndarray, np.ndarray, np.ndarray, list[i
 
     svc = FeatureGenerationService()
     X_rows, y_home, y_away, ids, weights = [], [], [], [], []
-    for m in finished:
+    total = len(finished)
+    for i, m in enumerate(finished):
         mf = svc.build(m, for_training=True)
         X_rows.append(mf.to_array())
         y_home.append(float(m["home_goals"]))
         y_away.append(float(m["away_goals"]))
         ids.append(int(m["id"]))
         weights.append(float(m.get("competition_weight") or 1.0))
+        if progress_cb and (i % 3 == 0 or i == total - 1):
+            progress_cb(i + 1, total)
 
     return np.array(X_rows), np.array(y_home), np.array(y_away), ids, weights

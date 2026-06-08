@@ -107,12 +107,20 @@ class EnsemblePredictor:
         total = sum(w.values()) or 1.0
         return {k: v / total for k, v in w.items()}
 
-    def train_xgboost(self, min_samples: int = 10) -> dict[str, Any]:
+    def train_xgboost(
+        self,
+        min_samples: int = 10,
+        *,
+        dataset: Optional[tuple] = None,
+    ) -> dict[str, Any]:
         if not HAS_XGBOOST:
             return {"trained": False, "message": "xgboost not installed"}
         from src.features import build_training_dataset
 
-        X, y_home, y_away, _ids, _weights = build_training_dataset()
+        if dataset is None:
+            X, y_home, y_away, _ids, _weights = build_training_dataset()
+        else:
+            X, y_home, y_away, _ids, _weights = dataset
         if len(X) < min_samples:
             self._xgb_trained = False
             return {"trained": False, "samples": len(X)}

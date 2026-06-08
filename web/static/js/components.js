@@ -189,11 +189,32 @@ export function renderFactorChart(canvasId, pred) {
   });
 }
 
+export function predictionSourceBadge(pred) {
+  if (!pred) return "";
+  if (pred.is_placeholder) {
+    return `<span class="source-badge source-pending">Prediction pending</span>`;
+  }
+  const mode = pred.prediction_source_mode || "";
+  const labels = {
+    full_model: "Full model",
+    ensemble_without_xgb: "Ensemble",
+    heuristic_plus_elo: "Heuristic + Elo",
+    insufficient_data: "Limited data",
+    baseline_only: "Baseline estimate",
+    pending: "Pending",
+  };
+  const label = labels[mode] || (mode ? mode.replace(/_/g, " ") : "Unknown");
+  let cls = "source-badge";
+  if (mode === "full_model" || mode === "ensemble_without_xgb") cls += " source-strong";
+  else if (mode === "baseline_only" || mode === "insufficient_data") cls += " source-weak";
+  return `<span class="${cls}">${escapeHtml(label)}</span>`;
+}
+
 export function matchCardHtml(match, { clickable = true, linkPrefix = "#/match" } = {}) {
   const live = isLive(match.status);
   const pred = match.prediction;
+  const isPlaceholder = !!pred?.is_placeholder;
   const top = pred?.top_scorelines?.[0];
-  // Poisson mode scoreline (integers); fall back to rounded stored pick (legacy rows may have λ)
   const pickHome = top?.home ?? Math.round(Number(pred?.predicted_home_goals ?? 0));
   const pickAway = top?.away ?? Math.round(Number(pred?.predicted_away_goals ?? 0));
   const pickPct = top?.probability ?? 0;
@@ -206,17 +227,21 @@ export function matchCardHtml(match, { clickable = true, linkPrefix = "#/match" 
       ? `<span class="badge badge-finished">FINAL</span>`
       : `<span class="badge badge-upcoming">UPCOMING</span>`;
 
-  const sourceBadge = pred?.prediction_source_mode
-    ? `<span class="source-badge">${escapeHtml(pred.prediction_source_mode.replace(/_/g, " "))}</span>`
-    : "";
+  const sourceBadge = predictionSourceBadge(pred);
 
   const pickRow = hasScore
     ? `<div class="pick-row"><span class="pick-label">FINAL</span></div>`
-    : `<div class="pick-row">
-        <span class="pick-label">Most likely scoreline</span>
-        <span class="pick-conf">${pickHome}–${pickAway}${pickPct > 0 ? ` <span class="muted">(${(pickPct * 100).toFixed(0)}% exact score)</span>` : ""}</span>
-        ${sourceBadge}
-      </div>`;
+    : isPlaceholder
+      ? `<div class="pick-row">
+          <span class="pick-label">Research pick</span>
+          <span class="pick-conf muted">Not generated yet</span>
+          ${sourceBadge}
+        </div>`
+      : `<div class="pick-row">
+          <span class="pick-label">Most likely scoreline</span>
+          <span class="pick-conf">${pickHome}–${pickAway}${pickPct > 0 ? ` <span class="muted">(${(pickPct * 100).toFixed(0)}% exact score)</span>` : ""}</span>
+          ${sourceBadge}
+        </div>`;
 
   const teamCol = (name, meta, side) =>
     `<div class="team-col ${side}">
@@ -228,13 +253,13 @@ export function matchCardHtml(match, { clickable = true, linkPrefix = "#/match" 
     <div class="match-row">
       ${teamCol(match.home_team, match.home, "home")}
       <div class="score-block">
-        <div class="score">${center}</div>
+        <div class="score">${hasScore || !isPlaceholder ? center : "—"}</div>
         ${pickRow}
       </div>
       ${teamCol(match.away_team, match.away, "away")}
     </div>
-    ${outcomeBar(pred)}
-    ${confidenceBlock(pred)}`;
+    ${isPlaceholder ? "" : outcomeBar(pred)}
+    ${isPlaceholder ? "" : confidenceBlock(pred)}`;
 
   if (clickable) {
     return `<a href="${linkPrefix}/${match.id}" class="card card-link${live ? " live" : ""}">${inner}</a>`;
@@ -313,7 +338,7 @@ export function setMonitorControlsLocked(locked) {
   if (!panel) return;
   panel.classList.toggle("admin-locked", locked);
   panel.querySelectorAll("button").forEach((btn) => {
-    if (btn.id === "btn-pipeline-cancel") {
+    if (btn.id === "btn-pipeline-cancel" || btn.id === "btn-admin-logout") {
       btn.disabled = false;
       return;
     }
@@ -328,6 +353,7 @@ export function adminPanelHtml() {
         <h3 class="admin-panel-title">Pipeline controls</h3>
         <p class="admin-panel-hint">Admin only · normal browsing uses fast read-only endpoints</p>
       </div>
+      <button class="btn-ghost btn-admin-logout" type="button" id="btn-admin-logout">Sign out</button>
     </div>
     <div class="admin-panel-body">
       <button class="btn-primary btn-pipeline-main" type="button" data-pipeline-mode="full_pipeline">
@@ -336,8 +362,10 @@ export function adminPanelHtml() {
       <div class="btn-row">
         <button class="btn-secondary" type="button" data-pipeline-mode="data_sync_only">Sync data</button>
         <button class="btn-secondary" type="button" data-pipeline-mode="predictions_only">Predictions</button>
+        <button class="btn-secondary" type="button" id="btn-admin-retrain">Retrain models</button>
         <button class="btn-ghost" type="button" id="btn-admin-predict">Refresh predictions</button>
         <button class="btn-ghost" type="button" id="btn-admin-players">Reload Kaggle squads</button>
+        <button class="btn-ghost" type="button" id="btn-repair-predictions">Repair missing predictions</button>
       </div>
     </div>
   </div>`;
@@ -352,13 +380,20 @@ function formatDuration(seconds) {
   return rem ? `${m}m ${rem}s` : `${m}m`;
 }
 
-export function progressBarHtml(id = "pipeline-progress") {
+export function progressBarHtml(id = "pipeline-progress", options = {}) {
+  const {
+    phaseLabel = "Starting pipeline…",
+    showCancel = id === "pipeline-progress",
+  } = options;
+  const cancelBtn = showCancel
+    ? `<button type="button" id="btn-pipeline-cancel" class="btn-ghost btn-pipeline-cancel hidden" aria-label="Cancel pipeline run">Cancel</button>`
+    : "";
   return `<div id="${id}" class="progress-panel hidden" role="status" aria-live="polite">
     <div class="progress-header">
-      <span class="progress-phase">Starting pipeline…</span>
+      <span class="progress-phase">${phaseLabel}</span>
       <div class="progress-header-actions">
         <span class="progress-pct">0%</span>
-        <button type="button" id="btn-pipeline-cancel" class="btn-ghost btn-pipeline-cancel hidden" aria-label="Cancel pipeline run">Cancel</button>
+        ${cancelBtn}
       </div>
     </div>
     <div class="progress-track"><div class="progress-fill" style="width:0%"></div></div>
@@ -395,12 +430,33 @@ export function updateProgressBar(panelId, progress) {
       panel.classList.remove("hidden", "progress-cancelling", "progress-cancelled");
       panel.querySelector(".progress-fill").style.width = "100%";
       panel.querySelector(".progress-pct").textContent = "100%";
-      panel.querySelector(".progress-phase").textContent = "Complete";
-      panel.querySelector(".progress-steps").textContent = "All steps finished";
+      const isTraining = progress.mode_label === "Model training";
+      panel.querySelector(".progress-phase").textContent = isTraining ? "Training complete" : "Complete";
+      panel.querySelector(".progress-steps").textContent = isTraining
+        ? (progress.model_version ? `Model ${progress.model_version}` : "All training steps finished")
+        : "All steps finished";
       panel.querySelector(".progress-timing").textContent = progress.elapsed_seconds
         ? `${formatDuration(progress.elapsed_seconds)} total`
         : "";
-      panel.querySelector(".progress-detail").textContent = "Refreshing page…";
+      panel.querySelector(".progress-detail").textContent = isTraining
+        ? (progress.message || "Reloading monitor…")
+        : "Refreshing page…";
+      if (cancelBtn) cancelBtn.classList.add("hidden");
+      setMonitorControlsLocked(false);
+      return;
+    }
+    if (progress?.failed) {
+      panel.classList.remove("hidden", "progress-cancelling");
+      panel.classList.add("progress-cancelled");
+      panel.querySelector(".progress-fill").style.width = `${Math.round(progress.overall_progress_pct || 0)}%`;
+      panel.querySelector(".progress-pct").textContent = "Failed";
+      panel.querySelector(".progress-phase").textContent =
+        progress.mode_label === "Model training" ? "Training failed" : "Pipeline failed";
+      panel.querySelector(".progress-steps").textContent = progress.step_label || "Error";
+      panel.querySelector(".progress-timing").textContent = progress.elapsed_seconds
+        ? `${formatDuration(progress.elapsed_seconds)} elapsed`
+        : "";
+      panel.querySelector(".progress-detail").textContent = progress.error || progress.message || "Unknown error";
       if (cancelBtn) cancelBtn.classList.add("hidden");
       setMonitorControlsLocked(false);
       return;
@@ -443,7 +499,12 @@ export function updateProgressBar(panelId, progress) {
 
   const timingParts = [];
   const remaining = progress.estimated_remaining_seconds;
-  if (remaining != null && remaining > 0) {
+  const isTraining = progress.mode_label === "Model training";
+  if (isTraining) {
+    if (progress.timing_hint) {
+      timingParts.push(progress.timing_hint);
+    }
+  } else if (remaining != null && remaining > 0) {
     timingParts.push(`~${formatDuration(remaining)} left`);
   } else if (pct > 2 && pct < 99) {
     timingParts.push("estimating…");

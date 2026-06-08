@@ -82,7 +82,10 @@ export async function adminLogin(password) {
   return data;
 }
 
-const PUBLIC_ADMIN_GETS = new Set(["/admin/pipeline/progress"]);
+const PUBLIC_ADMIN_GETS = new Set([
+  "/admin/pipeline/progress",
+  "/admin/model/retrain/progress",
+]);
 
 function isAdminAuthError(message, status) {
   const msg = String(message || "").toLowerCase();
@@ -200,9 +203,14 @@ export async function loadFreshness() {
 }
 
 let pipelinePollGeneration = 0;
+let retrainPollGeneration = 0;
 
 export function abortPipelinePolling() {
   pipelinePollGeneration += 1;
+}
+
+export function abortRetrainPolling() {
+  retrainPollGeneration += 1;
 }
 
 export async function pollPipelineProgress(onUpdate, intervalMs = 800) {
@@ -219,6 +227,43 @@ export async function pollPipelineProgress(onUpdate, intervalMs = 800) {
       try {
         const data = await request("/admin/pipeline/progress", { noCache: true });
         if (generation !== pipelinePollGeneration) {
+          resolve({ running: false, aborted: true });
+          return;
+        }
+        pollErrors = 0;
+        onUpdate(data);
+        if (data.running) {
+          setTimeout(poll, intervalMs);
+        } else {
+          resolve(data);
+        }
+      } catch (e) {
+        pollErrors += 1;
+        if (pollErrors < maxPollErrors) {
+          setTimeout(poll, intervalMs * 2);
+        } else {
+          resolve({ running: false, error: e.message });
+        }
+      }
+    };
+    poll();
+  });
+}
+
+export async function pollRetrainProgress(onUpdate, intervalMs = 1000) {
+  const generation = retrainPollGeneration;
+  let pollErrors = 0;
+  const maxPollErrors = 40;
+
+  return new Promise((resolve) => {
+    const poll = async () => {
+      if (generation !== retrainPollGeneration) {
+        resolve({ running: false, aborted: true });
+        return;
+      }
+      try {
+        const data = await request("/admin/model/retrain/progress", { noCache: true });
+        if (generation !== retrainPollGeneration) {
           resolve({ running: false, aborted: true });
           return;
         }

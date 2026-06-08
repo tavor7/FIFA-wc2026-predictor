@@ -28,7 +28,7 @@ function nextMatchesHtml(matches, phase) {
   if (!matches?.length) {
     return section(
       phase === "group_stage" ? "Next group matches" : "Upcoming knockout matches",
-      `<p class="empty">No upcoming fixtures synced yet. Use <strong>Sync data</strong> on the home page.</p>`
+      `<p class="empty">No upcoming fixtures synced yet. Open <a href="#/monitor">Monitor</a> → <strong>Sync data</strong>.</p>`
     );
   }
 

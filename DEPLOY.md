@@ -45,6 +45,30 @@ Then bootstrap once:
 curl -X POST https://YOUR-API.onrender.com/bootstrap
 ```
 
+Then in **Monitor** (web `#/monitor`, admin password):
+
+1. **Sync data** or **Run full pipeline**
+2. **Retrain models** (trains RF + XGBoost, saves registry, refreshes predictions + UI cache)
+3. Confirm diagnostics: `model_registry` populated, no critical gaps
+
+---
+
+## Step 2b — Persist ML models across redeploys (recommended)
+
+Render’s filesystem is ephemeral. Without storage, trained models are lost on every deploy.
+
+1. Supabase dashboard → **Storage** → create bucket named `models` (private is fine)
+2. Add to Render environment:
+
+| Key | Value |
+|-----|--------|
+| `SUPABASE_URL` | `https://xxxx.supabase.co` (Project Settings → API) |
+| `SUPABASE_SERVICE_ROLE_KEY` | service role key (keep secret) |
+
+After **Retrain models**, `.joblib` files upload automatically via `src/model_storage.py`. On cold start, models download before serving predictions.
+
+Also set `ADMIN_PASSWORD` on Render for Monitor admin actions.
+
 ---
 
 ## Step 3 — Run Expo on your phone
@@ -108,5 +132,7 @@ cd mobile && npm start
 |---------|-----|
 | App can't connect | Check `EXPO_PUBLIC_API_URL` in the project root `.env` |
 | API 502 / slow | Render free tier cold start — wait 60s |
-| Empty matches | Open API `/bootstrap` or pull to refresh in app |
+| Empty matches | Open API `/bootstrap` or Monitor → Sync data |
+| Predictions show "Baseline" | Monitor → Retrain models; reload Kaggle squads first |
+| Models lost after deploy | Set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`; create `models` bucket |
 | Streamlit still running | Render now uses FastAPI; redeploy from latest `render.yaml` |

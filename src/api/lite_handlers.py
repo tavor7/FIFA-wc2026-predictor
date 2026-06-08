@@ -165,6 +165,7 @@ def _build_monitor_diagnostics(counts: dict[str, int]) -> dict[str, Any]:
     from src.models.ensemble import EnsemblePredictor, HAS_XGBOOST
     from src.seed.import_fc26_players import needs_fc26_reimport, squad_size_target
     from src.services.pipeline_orchestrator import is_scheduler_suppressed, pipeline_is_busy
+    from src.services.model_training_runner import model_training_is_busy
 
     pred = db.get_prediction_diagnostics()
     fc26_total = ext.count_fc26_players()
@@ -270,7 +271,8 @@ def _build_monitor_diagnostics(counts: dict[str, int]) -> dict[str, Any]:
         "freshness": freshness_rows,
         "staleness_warnings": stale_warnings,
         "pipeline": {
-            "busy": pipeline_is_busy(),
+            "busy": pipeline_is_busy() or model_training_is_busy(),
+            "training": model_training_is_busy(),
             "scheduler_suppressed": is_scheduler_suppressed(),
             "failed_steps_recent": failed_steps,
         },

@@ -3,39 +3,157 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+import threading
+from contextlib import contextmanager
+from typing import Any, Callable, Iterator, Optional
 
+from src import db
+from src.features import build_training_dataset
 from src.model_storage import save_models_after_train
-from src.models.ensemble import EnsemblePredictor
+from src.models.ensemble import EnsemblePredictor, get_or_create_ensemble
 from src.models.model_registry import register_model_run
 from src.models.weight_optimizer import optimize_ensemble_weights
 
 logger = logging.getLogger(__name__)
 
+ProgressCb = Callable[[str, float, str], None]
+
+
+@contextmanager
+def _step_heartbeat(
+    report: Callable[[str, float, str], None],
+    step: str,
+    start_pct: float,
+    end_pct: float,
+    label: str,
+    *,
+    interval_s: float = 4.0,
+) -> Iterator[None]:
+    """Keep progress messages fresh during blocking work (no rising ETA math)."""
+    stop = threading.Event()
+    start = start_pct
+
+    def _tick() -> None:
+        tick = 0
+        span = max(end_pct - start_pct - 1, 1)
+        while not stop.wait(interval_s):
+            tick += 1
+            pct = min(end_pct - 1, start + span * (1 - 0.85**tick))
+            elapsed = int(tick * interval_s)
+            report(step, pct, f"{label}… ({elapsed}s)")
+
+    report(step, start_pct, f"{label}…")
+    thread = threading.Thread(target=_tick, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=1.0)
+
 
 class ModelTrainingService:
     def __init__(self, ensemble: Optional[EnsemblePredictor] = None):
-        self.ensemble = ensemble or EnsemblePredictor()
+        self.ensemble = ensemble or get_or_create_ensemble()
 
-    def retrain_and_predict(self) -> dict[str, Any]:
-        train_result = self.ensemble.train_all()
-        save_models_after_train()
-        weights = optimize_ensemble_weights(self.ensemble)
+    def retrain_and_predict(
+        self,
+        progress_cb: Optional[ProgressCb] = None,
+    ) -> dict[str, Any]:
+        def report(step: str, pct: float, msg: str) -> None:
+            if progress_cb:
+                progress_cb(step, pct, msg)
+
+        report("prepare", 5, "Loading finished matches for training…")
+        finished = len(db.get_all_finished_matches())
+        report("prepare", 100, f"Found {finished} finished matches")
+
+        report("rf", 2, "Building training features from historical matches…")
+
+        def feature_progress(done: int, total: int) -> None:
+            pct = round(done / max(total, 1) * 75, 1)
+            report("rf", pct, f"Building training features {done}/{total}")
+
+        dataset = build_training_dataset(progress_cb=feature_progress)
+
+        with _step_heartbeat(report, "rf", 78, 95, "Fitting Random Forest"):
+            rf_result = self.ensemble.goal_model.train_model(dataset=dataset)
+        if rf_result.get("trained"):
+            self.ensemble.goal_model.save_model()
+            report("rf", 100, f"Random Forest trained on {rf_result.get('samples', '?')} matches")
+        else:
+            report("rf", 100, rf_result.get("message") or "Using heuristic Poisson (insufficient samples)")
+
+        report("xgb", 15, "Training XGBoost on same dataset…")
+        with _step_heartbeat(report, "xgb", 15, 95, "Fitting XGBoost"):
+            xgb_result = self.ensemble.train_xgboost(dataset=dataset)
+        if xgb_result.get("trained"):
+            report("xgb", 100, f"XGBoost trained on {xgb_result.get('samples', '?')} matches")
+        else:
+            report("xgb", 100, xgb_result.get("message") or "XGBoost skipped")
+
+        report("elo", 30, "Fitting Elo ratings…")
+        self.ensemble.elo.fit_from_database()
+        self.ensemble.elo.save()
+        train_result = {
+            "random_forest": rf_result,
+            "xgboost": xgb_result,
+            "elo": {"teams": len(self.ensemble.elo.ratings)},
+        }
+        report("elo", 100, f"Elo fitted for {train_result['elo']['teams']} teams")
+
+        report("registry", 15, "Optimizing ensemble weights…")
+        with _step_heartbeat(report, "registry", 15, 90, "Optimizing weights"):
+            save_models_after_train()
+            weights = optimize_ensemble_weights(self.ensemble)
         version = register_model_run(
             weights=weights,
             active_models=[m for m in weights.keys()],
             metrics=train_result,
         )
+        report("registry", 100, f"Registered model {version}")
+
         from src.services.prediction_generation_service import PredictionGenerationService
 
-        pred_result = PredictionGenerationService(ensemble=self.ensemble).generate_all()
+        def pred_progress(done: int, total: int) -> None:
+            pct = round(done / max(total, 1) * 100, 1)
+            report("predictions", pct, f"Regenerating predictions {done}/{total}")
+
+        report("predictions", 0, "Regenerating all predictions…")
+        pred_result = PredictionGenerationService(ensemble=self.ensemble).generate_all(
+            progress_callback=pred_progress,
+        )
+        total_matches = int(pred_result.get("matches") or 0)
+        report(
+            "predictions",
+            100,
+            f"Generated {pred_result.get('generated', 0)} predictions for {total_matches} matches",
+        )
+
+        report("cache", 5, "Refreshing UI cache…")
+        from src.cache.response_cache import invalidate_all
+        from src.services.ui_cache_service import UICacheService
+
+        def cache_progress(pct: float, msg: str) -> None:
+            report("cache", pct, msg)
+
+        with _step_heartbeat(report, "cache", 5, 95, "Refreshing UI cache"):
+            UICacheService().refresh_all(progress_cb=cache_progress, fast=True)
+        invalidate_all()
+        report("cache", 100, "UI cache refreshed")
+
         backtest_metrics = None
+        report("backtest", 5, "Running tournament backtest…")
         try:
             from src.evaluation.backtest import backtest_tournament
 
-            backtest_metrics = backtest_tournament(league_filter="World Cup", limit=500)
+            with _step_heartbeat(report, "backtest", 5, 95, "Running backtest"):
+                backtest_metrics = backtest_tournament(league_filter="World Cup", limit=500)
+            report("backtest", 100, "Backtest complete")
         except Exception as exc:
             logger.warning("Post-retrain backtest skipped: %s", exc)
+            report("backtest", 100, "Backtest skipped")
+
         return {
             "training": train_result,
             "model_version": version,

@@ -70,8 +70,14 @@ export async function pageMatches() {
 }
 
 export async function pageLive() {
-  const data = await loadHomeFeed();
-  const matches = data.live || [];
+  let matches = [];
+  try {
+    matches = await request("/matches/live", { noCache: true });
+  } catch {
+    const data = await loadHomeFeed();
+    matches = data.live || [];
+  }
+  window.setPageMeta?.({ lastUpdated: new Date().toISOString() });
   return disclaimerHtml() +
     (matches.length
       ? matches.map((m) => matchCardHtml(m)).join("")
@@ -79,7 +85,11 @@ export async function pageLive() {
 }
 
 export async function pageResults() {
-  const matches = await request("/matches/recent");
+  let matches = await request("/matches/recent", { noCache: true });
+  matches = matches.map((m) => {
+    if (m.prediction || !m.id) return m;
+    return { ...m, prediction: { is_placeholder: true, prediction_source_mode: "pending" } };
+  });
   return disclaimerHtml() +
     (matches.length
       ? matches.map((m) => matchCardHtml(m)).join("")
@@ -128,14 +138,29 @@ export async function pageTeam(slug) {
 }
 
 export async function pageMatch(id) {
-  const match = await request(`/match-lite/${id}`);
+  let match;
+  try {
+    match = await request(`/match-lite/${id}`, { noCache: true });
+  } catch {
+    match = await request(`/matches/${id}`, { noCache: true });
+  }
+  if (match?.prediction && !match.prediction.explanation && !match.prediction.is_placeholder) {
+    try {
+      const full = await request(`/matches/${id}`, { noCache: true });
+      if (full?.prediction?.explanation) {
+        match = { ...match, prediction: { ...match.prediction, ...full.prediction } };
+      }
+    } catch {
+      /* keep lite match */
+    }
+  }
   const pred = match.prediction;
 
   let html = disclaimerHtml(true) +
     `<div class="page-header"><a class="back-link" href="#/">← Back</a></div>` +
     matchCardHtml(match, { clickable: false });
 
-  if (pred) {
+  if (pred && !pred.is_placeholder) {
     const alts = (pred.top_scorelines || []).slice(0, 3);
     html += section("Explanation", `
       ${pred.baseline_notice ? `<p class="prob-note">${escapeHtml(pred.baseline_notice)}</p>` : ""}
@@ -149,6 +174,8 @@ export async function pageMatch(id) {
         <div class="form-card"><span>Prediction confidence</span><strong>${pred.confidence_pct != null ? `${Math.round(pred.confidence_pct)}%` : "—"}</strong></div>
         ${pred.generated_at ? `<div class="form-card"><span>Last update</span><strong>${formatDateIsrael(pred.generated_at)}</strong></div>` : ""}
       </div>`);
+  } else if (pred?.is_placeholder) {
+    html += section("Explanation", `<p class="empty">Prediction not generated yet. Open <a href="#/monitor">Monitor</a> (admin) to run Predictions or Retrain models.</p>`);
   }
 
   if (match.injuries?.length) {
