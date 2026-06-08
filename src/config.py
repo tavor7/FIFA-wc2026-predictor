@@ -67,6 +67,8 @@ HOST_REGION_BOOST: float = float(_env("HOST_REGION_BOOST", "0.05"))
 SOUTH_AMERICA_BOOST: float = float(_env("SOUTH_AMERICA_BOOST", "0.05"))
 ELO_HOST_BOOST_POINTS: float = float(_env("ELO_HOST_BOOST_POINTS", "35"))
 FC26_WEIGHT_CAP: float = float(_env("FC26_WEIGHT_CAP", "0.35"))
+# Top N players per nation from Kaggle FC26 CSV (by overall rating)
+FC26_SQUAD_SIZE: int = int(_env("FC26_SQUAD_SIZE", "30"))
 STALE_DATA_HOURS: int = int(_env("STALE_DATA_HOURS", "24"))
 
 # Admin & deployment diagnostics

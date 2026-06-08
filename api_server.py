@@ -40,7 +40,9 @@ def _startup_seed_worker() -> None:
         from src.services.data_sync_service import DataSyncService
 
         ext.prune_non_tournament_teams()
-        if ext.count_fc26_players() < 400:
+        from src.seed.import_fc26_players import needs_fc26_reimport
+
+        if needs_fc26_reimport():
             DataSyncService().ensure_fc26_squads()
         logger.info("Background startup seed finished")
     except Exception as exc:

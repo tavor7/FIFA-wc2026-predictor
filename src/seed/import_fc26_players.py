@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from src import db
+from src import config, db
 from src import db_extended as dbx
 from src.seed.fc26_columns import FC26_CSV_USECOLS
 from src.seed.kaggle_fc26 import (
@@ -25,7 +25,13 @@ logger = logging.getLogger(__name__)
 
 FC26_CSV_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "seeds" / "fc26_players.csv"
 FC26_ID_OFFSET = 260_000_000
-SQUAD_SIZE = 26
+
+
+def squad_size_target() -> int:
+    return config.FC26_SQUAD_SIZE
+
+
+SQUAD_SIZE = squad_size_target()  # re-export for scripts
 
 
 def _primary_position(raw: str) -> Optional[str]:
@@ -150,7 +156,7 @@ def _row_to_player_kwargs(row: Any) -> dict[str, Any]:
 
 def import_fc26_players(
     csv_path: Optional[Path] = None,
-    squad_size: int = SQUAD_SIZE,
+    squad_size: Optional[int] = None,
     download: bool = True,
 ) -> dict[str, Any]:
     """
@@ -158,6 +164,7 @@ def import_fc26_players(
     Dataset: rovnez/fc-26-fifa-26-player-data (110 columns, ~18k players).
     """
     db.init_db()
+    squad_size = squad_size if squad_size is not None else squad_size_target()
     path = csv_path or FC26_CSV_PATH
     if not path.is_file():
         ensure_fc26_csv(path, allow_download=download)
@@ -178,14 +185,18 @@ def import_fc26_players(
     removed = _clear_fc26_players()
     written = 0
     teams_touched: set[str] = set()
-    thin_teams: list[str] = []
+    thin_teams: list[dict[str, Any]] = []
+    per_team_counts: dict[str, int] = {}
 
     for team_name, group in df.groupby("team"):
         team_id = _resolve_team_id(team_name)
         teams_touched.add(team_name)
         squad = group.head(squad_size)
+        per_team_counts[team_name] = len(squad)
         if len(squad) < squad_size:
-            thin_teams.append(team_name)
+            thin_teams.append(
+                {"team": team_name, "kaggle_players": len(squad), "target": squad_size}
+            )
         for _, row in squad.iterrows():
             pid = int(row["player_id"])
             kwargs = _row_to_player_kwargs(row)
@@ -211,12 +222,32 @@ def import_fc26_players(
         "players_removed": removed,
         "squad_size": squad_size,
         "thin_teams": thin_teams,
+        "per_team_counts": per_team_counts,
         "fields_imported": list(FC26_CSV_USECOLS),
         "note": (
-            "Squad ratings from Kaggle FC26. Nations with <26 players in the dataset "
-            "are topped up from API-Football during pipeline sync."
+            f"Top {squad_size} by OVR per nation from Kaggle FC26. "
+            "Nations with fewer rows in the CSV are topped up from API-Football."
         ),
     }
+
+
+def needs_fc26_reimport() -> bool:
+    """True when DB squads are missing or still on an older smaller import."""
+    from src.tournament_teams import get_wc2026_team_names
+
+    target = squad_size_target()
+    n_teams = len(get_wc2026_team_names())
+    total = dbx.count_fc26_players()
+    if total == 0:
+        return True
+    avg = total / n_teams if n_teams else 0
+    # Thin Kaggle nations pull the average down; 24+ usually means a 30-player import ran
+    if avg < min(target - 4, 24):
+        return True
+    for row in dbx.get_tournament_teams():
+        if dbx.count_fc26_players_for_team(int(row["id"])) == 0:
+            return True
+    return False
 
 
 if __name__ == "__main__":

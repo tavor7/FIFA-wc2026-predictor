@@ -554,20 +554,45 @@ def evaluation_backtest(league: str = "World Cup", limit: int = 500) -> dict[str
 
 
 @router.post("/seed/players")
-def seed_players(bg: BackgroundTasks) -> dict[str, Any]:
+def seed_players(bg: BackgroundTasks, force: bool = True) -> dict[str, Any]:
     """Import FC26 player ratings from Kaggle (rovnez/fc-26-fifa-26-player-data)."""
-    from src.seed.import_fc26_players import import_fc26_players
+    from src.services.data_sync_service import DataSyncService
 
     def _job() -> None:
         try:
-            import_fc26_players(download=True)
+            DataSyncService().ensure_fc26_squads(force=force)
         except Exception as exc:
             logger.exception("FC26 player import failed: %s", exc)
 
     bg.add_task(_job)
+    from src.seed.import_fc26_players import squad_size_target
+
     return {
         "status": "started",
-        "message": "Importing FC26 player squads in background (~1–2 min).",
+        "message": f"Importing top {squad_size_target()} Kaggle FC26 players per nation (~1–2 min).",
+    }
+
+
+@router.post("/admin/players/reload")
+def admin_reload_players(
+    bg: BackgroundTasks,
+    _auth: None = Depends(require_admin),
+) -> dict[str, Any]:
+    """Force re-import top-N Kaggle FC26 squads for all 48 nations."""
+    from src.services.data_sync_service import DataSyncService
+    from src.seed.import_fc26_players import squad_size_target
+
+    def _job() -> None:
+        try:
+            DataSyncService().ensure_fc26_squads(force=True)
+        except Exception as exc:
+            logger.exception("FC26 player reload failed: %s", exc)
+
+    bg.add_task(_job)
+    return {
+        "status": "started",
+        "squad_size": squad_size_target(),
+        "message": f"Reloading top {squad_size_target()} players per nation from Kaggle.",
     }
 
 

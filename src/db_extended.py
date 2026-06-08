@@ -217,11 +217,16 @@ def count_fc26_players_for_team(team_id: int) -> int:
         return int(dict(row)["c"])
 
 
-def get_squad_players(team_id: int, *, max_size: int = 26) -> list[Row]:
+def get_squad_players(team_id: int, *, max_size: Optional[int] = None) -> list[Row]:
     """
     Squad roster for UI: prefer EA FC 26 ratings; fill thin squads from API data.
     Excludes sparse API-only duplicates when a full FC26 roster exists.
     """
+    if max_size is None:
+        from src import config
+
+        max_size = config.FC26_SQUAD_SIZE
+
     all_players = get_players_by_team_id(team_id)
     fc26 = [
         p for p in all_players

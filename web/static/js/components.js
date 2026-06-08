@@ -285,6 +285,7 @@ export function adminPanelHtml() {
         <button class="btn-secondary" type="button" data-pipeline-mode="data_sync_only">Sync data</button>
         <button class="btn-secondary" type="button" data-pipeline-mode="predictions_only">Predictions</button>
         <button class="btn-ghost" type="button" id="btn-admin-predict">Refresh predictions</button>
+        <button class="btn-ghost" type="button" id="btn-admin-players">Reload Kaggle squads</button>
       </div>
     </div>
   </div>`;

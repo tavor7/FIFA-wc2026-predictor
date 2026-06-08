@@ -13,7 +13,9 @@ from src.tournament_teams import is_wc2026_team
 
 logger = logging.getLogger(__name__)
 
-FULL_SQUAD_SIZE = 26
+
+def full_squad_size() -> int:
+    return config.FC26_SQUAD_SIZE
 
 
 def _safe_float(value: Any) -> Optional[float]:
@@ -98,11 +100,12 @@ def sync_squads(
         try:
             internal_team_id = dbx.upsert_team(team_name, api_team_id=api_team_id)
             fc26_count = dbx.count_fc26_players_for_team(internal_team_id)
+            target = full_squad_size()
             if thin_teams_only or fill_thin_squads:
-                if fc26_count >= FULL_SQUAD_SIZE:
+                if fc26_count >= target:
                     teams_skipped += 1
                     continue
-            elif fc26_count >= 15:
+            elif fc26_count >= min(15, target):
                 teams_skipped += 1
                 continue
             raw_players = client.get_players(api_team_id, season=season)

@@ -155,6 +155,26 @@ async function ensureAdminAuth() {
   });
 }
 
+async function adminReloadPlayers() {
+  if (!(await ensureAdminAuth())) return;
+  const btn = document.querySelector("#btn-admin-players");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Loading squads…";
+  }
+  try {
+    const data = await request("/admin/players/reload", { method: "POST" });
+    alert(data.message || "Kaggle squads reload started.");
+  } catch (e) {
+    showError(e.message || "Squad reload failed");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Reload Kaggle squads";
+    }
+  }
+}
+
 async function adminRefreshPredictions() {
   if (!(await ensureAdminAuth())) return;
   const btn = document.querySelector("#btn-admin-predict");
@@ -199,6 +219,10 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("#btn-admin-predict")) {
     e.preventDefault();
     adminRefreshPredictions();
+  }
+  if (e.target.closest("#btn-admin-players")) {
+    e.preventDefault();
+    adminReloadPlayers();
   }
   const pipeBtn = e.target.closest("[data-pipeline-mode]");
   if (pipeBtn) {

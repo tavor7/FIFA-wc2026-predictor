@@ -127,7 +127,7 @@ export async function pageTeam(slug) {
 
   const squadNote =
     data.squad_source === "fc26"
-      ? `<p class="section-note">Squad ratings from Kaggle FC 26. Nations with fewer than 26 players in the dataset are topped up from API-Football.</p>`
+      ? `<p class="section-note">Top 30 squad ratings per nation from Kaggle FC 26. Nations with fewer players in the CSV are topped up from API-Football.</p>`
       : "";
   const squadSection = section(
     "Squad",

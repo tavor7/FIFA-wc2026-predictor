@@ -63,15 +63,32 @@ class DataSyncService:
         _log_sync("sync_injuries", result)
         return result
 
-    def ensure_fc26_squads(self, min_players: int = 400) -> dict[str, Any]:
-        """Load EA FC 26 squad ratings from bundled CSV when missing."""
-        fc26_total = ext.count_fc26_players()
-        if fc26_total >= min_players:
-            return {"status": "skipped", "players": fc26_total}
-        from src.seed.import_fc26_players import FC26_CSV_PATH, import_fc26_players
+    def ensure_fc26_squads(self, *, force: bool = False) -> dict[str, Any]:
+        """Load top-N Kaggle FC26 players per nation (re-import when stale)."""
+        from src.seed.import_fc26_players import (
+            FC26_CSV_PATH,
+            import_fc26_players,
+            needs_fc26_reimport,
+            squad_size_target,
+        )
 
-        logger.info("Importing FC26 squads (%s players in DB)", fc26_total)
-        result = import_fc26_players(download=not FC26_CSV_PATH.is_file())
+        fc26_total = ext.count_fc26_players()
+        if not force and not needs_fc26_reimport():
+            return {
+                "status": "skipped",
+                "players": fc26_total,
+                "squad_size": squad_size_target(),
+            }
+
+        logger.info(
+            "Importing Kaggle FC26 squads (top %s per nation, %s in DB)",
+            squad_size_target(),
+            fc26_total,
+        )
+        result = import_fc26_players(
+            squad_size=squad_size_target(),
+            download=not FC26_CSV_PATH.is_file(),
+        )
         result["status"] = "imported"
         _log_sync("import_fc26_players", result, source="kaggle_fc26")
         return result
