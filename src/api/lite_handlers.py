@@ -156,6 +156,125 @@ def get_monitor_lite() -> dict[str, Any]:
             "error_message": last_run.get("error_message") if last_run else None,
         },
         "active_pipeline": pipe_db.get_active_pipeline_progress(),
+        "diagnostics": _build_monitor_diagnostics(counts),
+    }
+
+
+def _build_monitor_diagnostics(counts: dict[str, int]) -> dict[str, Any]:
+    from src.models.model_registry import get_active_model_info
+    from src.models.ensemble import EnsemblePredictor, HAS_XGBOOST
+    from src.seed.import_fc26_players import needs_fc26_reimport, squad_size_target
+    from src.services.pipeline_orchestrator import is_scheduler_suppressed, pipeline_is_busy
+
+    pred = db.get_prediction_diagnostics()
+    fc26_total = ext.count_fc26_players()
+    per_team = ext.fc26_per_team_counts()
+    target = squad_size_target()
+    thin_teams = sum(1 for n in per_team.values() if n < target)
+    teams_without_fc26 = sum(
+        1 for row in ext.get_tournament_teams()
+        if per_team.get(int(row["id"]), 0) == 0
+    )
+
+    freshness_raw = ext.build_freshness_snapshot()
+    stale_warnings = ext.staleness_warnings(freshness_raw)
+    freshness_rows = []
+    for entity, entry in sorted(freshness_raw.items()):
+        freshness_rows.append({
+            "entity": entity,
+            "last_updated": entry.get("last_updated"),
+            "completeness_pct": entry.get("completeness_pct"),
+            "source": entry.get("source"),
+        })
+
+    model_info = get_active_model_info()
+    weights = model_info.get("weights_json")
+    if not weights:
+        try:
+            weights = EnsemblePredictor()._weights()
+            weights_source = "default_ensemble"
+        except Exception:
+            weights = {}
+            weights_source = "none"
+    else:
+        weights_source = "model_registry"
+
+    upcoming = counts.get("fixtures", 0)
+    missing = counts.get("missing_predictions", 0)
+    with_pred = max(0, upcoming - missing) if upcoming else 0
+    home_cache = get_cached(cache_key("/home-lite", "limit=48"))
+    failed_steps = len(pipe_db.get_failed_step_runs(limit=20))
+
+    gaps: list[dict[str, str]] = []
+    if missing > 0:
+        gaps.append({"level": "bad", "text": f"{missing} upcoming match(es) have no prediction"})
+    if pred["modes"].get("full_model", 0) == 0 and pred["total"] > 0:
+        gaps.append({"level": "warn", "text": "No full-model predictions yet — mostly baseline/heuristic modes"})
+    if pred["empty_explanations"] > 0:
+        gaps.append({"level": "warn", "text": f"{pred['empty_explanations']} prediction(s) missing explanation text"})
+    if thin_teams > 0:
+        gaps.append({"level": "warn", "text": f"{thin_teams} team(s) below {target}-player Kaggle squad target"})
+    if teams_without_fc26 > 0:
+        gaps.append({"level": "warn", "text": f"{teams_without_fc26} team(s) have no FC26 squad data"})
+    if needs_fc26_reimport():
+        gaps.append({"level": "warn", "text": "Kaggle FC26 squads need reload (Monitor → Reload Kaggle squads)"})
+    if stale_warnings:
+        for w in stale_warnings[:5]:
+            gaps.append({"level": "warn", "text": w})
+    if pred["features_stored"] < with_pred:
+        gaps.append({
+            "level": "info",
+            "text": f"Feature store: {pred['features_stored']}/{with_pred} upcoming matches (built on-the-fly in fast mode)",
+        })
+    if pred["match_cards_cached"] < max(1, int(with_pred * 0.5)):
+        gaps.append({"level": "info", "text": "UI match cache is cold — run Predictions or full pipeline to refresh"})
+    if failed_steps > 0:
+        gaps.append({"level": "warn", "text": f"{failed_steps} recent pipeline step failure(s) in history"})
+    if not gaps:
+        gaps.append({"level": "ok", "text": "Core data looks complete for read-only browsing"})
+
+    return {
+        "data": {
+            "teams": counts.get("teams", 0),
+            "players_total": counts.get("players", 0),
+            "fc26_players": fc26_total,
+            "injuries": counts.get("injuries", 0),
+            "thin_squad_teams": thin_teams,
+            "squad_target": target,
+            "fc26_reimport_needed": needs_fc26_reimport(),
+        },
+        "predictions": {
+            "total": pred["total"],
+            "upcoming_matches": upcoming,
+            "upcoming_with_predictions": with_pred,
+            "missing": missing,
+            "avg_confidence_pct": pred["avg_confidence_pct"],
+            "avg_completeness_pct": pred["avg_completeness_pct"],
+            "modes": pred["modes"],
+            "empty_explanations": pred["empty_explanations"],
+            "features_stored": pred["features_stored"],
+        },
+        "model": {
+            "version": model_info.get("model_version"),
+            "feature_version": model_info.get("feature_version"),
+            "trained_at": model_info.get("data_snapshot_timestamp"),
+            "weights": {k: round(float(v), 3) for k, v in (weights or {}).items()},
+            "weights_source": weights_source,
+            "xgboost_available": HAS_XGBOOST,
+        },
+        "cache": {
+            "home_api": "warm" if home_cache else "cold",
+            "match_cards": pred["match_cards_cached"],
+            "team_cards": pred["team_cards_cached"],
+        },
+        "freshness": freshness_rows,
+        "staleness_warnings": stale_warnings,
+        "pipeline": {
+            "busy": pipeline_is_busy(),
+            "scheduler_suppressed": is_scheduler_suppressed(),
+            "failed_steps_recent": failed_steps,
+        },
+        "gaps": gaps,
     }
 
 

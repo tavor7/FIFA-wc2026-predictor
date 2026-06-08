@@ -1536,6 +1536,56 @@ def get_prediction_source_counts() -> dict[str, int]:
     return {"baseline": baseline, "full_model": full_model}
 
 
+def get_prediction_diagnostics() -> dict[str, Any]:
+    """Aggregate prediction quality stats in one query."""
+    with get_connection() as conn:
+        row = _execute(
+            conn,
+            """
+            SELECT
+                COUNT(*) AS total,
+                AVG(confidence_pct) AS avg_confidence,
+                AVG(data_completeness_pct) AS avg_completeness,
+                SUM(CASE WHEN prediction_source_mode = 'full_model' THEN 1 ELSE 0 END) AS full_model,
+                SUM(CASE WHEN prediction_source_mode = 'ensemble_without_xgb' THEN 1 ELSE 0 END) AS ensemble_without_xgb,
+                SUM(CASE WHEN prediction_source_mode = 'heuristic_plus_elo' THEN 1 ELSE 0 END) AS heuristic_plus_elo,
+                SUM(CASE WHEN prediction_source_mode = 'insufficient_data' THEN 1 ELSE 0 END) AS insufficient_data,
+                SUM(CASE WHEN prediction_source_mode = 'baseline_only' THEN 1 ELSE 0 END) AS baseline_only,
+                SUM(CASE WHEN prediction_source_mode IS NULL OR prediction_source_mode = 'unknown' THEN 1 ELSE 0 END) AS unknown,
+                SUM(CASE WHEN explanation IS NULL OR TRIM(explanation) = '' THEN 1 ELSE 0 END) AS empty_explanations
+            FROM predictions
+            """,
+        ).fetchone()
+        fs_row = _execute(
+            conn, "SELECT COUNT(DISTINCT match_id) AS c FROM feature_store"
+        ).fetchone()
+        cache_row = _execute(
+            conn, "SELECT COUNT(*) AS c FROM match_cards_cache"
+        ).fetchone()
+        team_cache_row = _execute(
+            conn, "SELECT COUNT(*) AS c FROM team_cards_cache"
+        ).fetchone()
+    d = dict(row) if row else {}
+    modes = {
+        "full_model": int(d.get("full_model") or 0),
+        "ensemble_without_xgb": int(d.get("ensemble_without_xgb") or 0),
+        "heuristic_plus_elo": int(d.get("heuristic_plus_elo") or 0),
+        "insufficient_data": int(d.get("insufficient_data") or 0),
+        "baseline_only": int(d.get("baseline_only") or 0),
+        "unknown": int(d.get("unknown") or 0),
+    }
+    return {
+        "total": int(d.get("total") or 0),
+        "avg_confidence_pct": round(float(d["avg_confidence"]), 1) if d.get("avg_confidence") is not None else None,
+        "avg_completeness_pct": round(float(d["avg_completeness"]), 1) if d.get("avg_completeness") is not None else None,
+        "modes": modes,
+        "empty_explanations": int(d.get("empty_explanations") or 0),
+        "features_stored": int(dict(fs_row)["c"]) if fs_row else 0,
+        "match_cards_cached": int(dict(cache_row)["c"]) if cache_row else 0,
+        "team_cards_cached": int(dict(team_cache_row)["c"]) if team_cache_row else 0,
+    }
+
+
 def count_empty_explanations() -> int:
     with get_connection() as conn:
         row = _execute(
