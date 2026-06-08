@@ -1464,7 +1464,7 @@ def get_home_lite_feed(upcoming_limit: int = 48, live_limit: int = 8) -> dict[st
             FROM matches WHERE {live_where}
             ORDER BY date ASC LIMIT ?
             """,
-            wc_params + list(live_statuses) + [live_limit],
+            list(live_statuses) + wc_params + [live_limit],
         ).fetchall()
         ids = list({int(dict(r)["id"]) for r in upcoming_rows + live_rows})
         pred_map: dict[int, Row] = {}
