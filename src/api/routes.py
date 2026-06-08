@@ -604,9 +604,19 @@ def admin_pipeline_progress() -> dict[str, Any]:
 def admin_pipeline_cancel(
     _auth: None = Depends(require_admin),
 ) -> dict[str, Any]:
-    from src.services.pipeline_orchestrator import request_pipeline_cancel
+    from src.services.pipeline_orchestrator import request_pipeline_cancel_all
 
-    return request_pipeline_cancel()
+    return request_pipeline_cancel_all()
+
+
+@router.get("/admin/pipeline/busy")
+def admin_pipeline_busy() -> dict[str, Any]:
+    from src.services.pipeline_orchestrator import pipeline_is_busy, is_scheduler_suppressed
+
+    return {
+        "busy": pipeline_is_busy(),
+        "scheduler_suppressed": is_scheduler_suppressed(),
+    }
 
 
 @router.get("/admin/pipeline/plan")
@@ -630,6 +640,14 @@ def admin_pipeline_run(
     if mode not in ("full_pipeline", "data_sync_only", "features_only", "predictions_only"):
         raise HTTPException(status_code=400, detail="Invalid pipeline mode")
     from src.services.pipeline_planner import plan_pipeline_steps
+    from src.services.pipeline_orchestrator import pipeline_is_busy, run_pipeline_async
+
+    if pipeline_is_busy():
+        active = pipe_db.get_active_pipeline_run_id()
+        raise HTTPException(
+            status_code=409,
+            detail=f"A pipeline is already running (run #{active}). Cancel it first.",
+        )
 
     plan = plan_pipeline_steps(mode, fast=True) if not force else {"force_all_steps": True}
     run_id = run_pipeline_async(mode=mode, triggered_by="admin", skip_completed=not force)

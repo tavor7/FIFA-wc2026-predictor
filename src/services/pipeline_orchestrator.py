@@ -28,38 +28,77 @@ logger = logging.getLogger(__name__)
 _active_run_id: Optional[int] = None
 _run_lock = threading.Lock()
 _cancel_requested: set[int] = set()
+_scheduler_suppressed_until: float = 0.0
+STALE_RUN_SECONDS = 2 * 3600
+
+
+def suppress_scheduler_pipelines(seconds: float = 7200) -> None:
+    """Pause scheduler-triggered pipelines after admin cancel."""
+    global _scheduler_suppressed_until
+    _scheduler_suppressed_until = time.monotonic() + seconds
+
+
+def is_scheduler_suppressed() -> bool:
+    return time.monotonic() < _scheduler_suppressed_until
+
+
+def pipeline_is_busy() -> bool:
+    with _run_lock:
+        if _active_run_id is not None:
+            return True
+    return pipe_db.get_active_pipeline_run_id() is not None
 
 
 def request_pipeline_cancel(run_id: Optional[int] = None) -> dict[str, Any]:
-    """Request stop; in-process worker exits after the current sub-task."""
+    """Cancel all active pipeline runs and pause the scheduler."""
+    return request_pipeline_cancel_all()
+
+
+def request_pipeline_cancel_all() -> dict[str, Any]:
+    """Cancel every active run; force-stop orphans; suppress scheduler restarts."""
     global _active_run_id
+    suppress_scheduler_pipelines(7200)
+
+    active_ids = pipe_db.get_all_active_pipeline_run_ids()
     with _run_lock:
-        rid = run_id or _active_run_id or pipe_db.get_active_pipeline_run_id()
-        if rid is None:
-            return {"status": "no_active_run", "message": "No pipeline is running"}
-        worker_active = _active_run_id == rid
+        worker_id = _active_run_id
+
+    if not active_ids and worker_id is None:
+        pipe_db.cleanup_stale_pipeline_runs(max_age_seconds=STALE_RUN_SECONDS)
+        return {"status": "no_active_run", "message": "No pipeline is running", "count": 0}
+
+    for rid in active_ids:
         _cancel_requested.add(rid)
+        pipe_db.mark_pipeline_cancel_requested(rid)
+        if rid != worker_id:
+            pipe_db.finish_pipeline_run(
+                rid,
+                "cancelled",
+                error_message="Cancelled by user",
+            )
 
-    pipe_db.mark_pipeline_cancel_requested(rid)
+    logger.info(
+        "Pipeline cancel-all: %d run(s), worker=%s, scheduler suppressed 2h",
+        len(active_ids),
+        worker_id,
+    )
 
-    if not worker_active:
-        pipe_db.finish_pipeline_run(
-            rid,
-            "cancelled",
-            error_message="Cancelled by user",
-            started_at=None,
-        )
-        logger.info("Pipeline run %s force-cancelled (no active worker)", rid)
+    if worker_id is None:
+        with _run_lock:
+            _active_run_id = None
         return {
             "status": "cancelled",
-            "run_id": rid,
-            "message": "Pipeline run stopped",
+            "count": len(active_ids),
+            "run_ids": active_ids,
+            "message": f"Stopped {len(active_ids)} pipeline run(s)",
         }
 
     return {
         "status": "cancelling",
-        "run_id": rid,
-        "message": "Cancel requested — stopping current step",
+        "count": len(active_ids),
+        "run_ids": active_ids,
+        "run_id": worker_id,
+        "message": "Cancelling — scheduler paused for 2 hours",
     }
 
 
@@ -102,10 +141,16 @@ class PipelineOrchestrator:
         skip_completed: bool = True,
     ) -> dict[str, Any]:
         global _active_run_id
+        if triggered_by == "scheduler" and is_scheduler_suppressed():
+            logger.info("Skipping scheduled %s (admin cancel suppress)", mode)
+            return {"status": "skipped", "reason": "scheduler_suppressed"}
+
         if run_id is None:
             with _run_lock:
                 if _active_run_id is not None:
                     return {"status": "busy", "run_id": _active_run_id}
+                if triggered_by == "scheduler" and pipe_db.get_active_pipeline_run_id() is not None:
+                    return {"status": "busy", "reason": "another_run_active"}
                 run_id = pipe_db.start_pipeline_run(mode, triggered_by)
                 _active_run_id = run_id
 
@@ -442,9 +487,15 @@ def run_pipeline_async(
     """Start pipeline in background thread; return run_id immediately."""
     global _active_run_id
 
+    if triggered_by == "scheduler" and is_scheduler_suppressed():
+        raise RuntimeError("scheduler suppressed")
+
     with _run_lock:
         if _active_run_id is not None:
             return _active_run_id
+        existing = pipe_db.get_active_pipeline_run_id()
+        if existing is not None:
+            return existing
         run_id = pipe_db.start_pipeline_run(mode, triggered_by)
         _active_run_id = run_id
 

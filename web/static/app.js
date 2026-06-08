@@ -1,8 +1,8 @@
 import {
   request, loadFreshness, lastResponseMeta, adminLogin, getAdminToken,
-  verifyAdminSession, pollPipelineProgress,
+  verifyAdminSession, pollPipelineProgress, abortPipelinePolling,
 } from "./js/api.js";
-import { freshnessBarHtml, skeletonCardsHtml } from "./js/components.js";
+import { freshnessBarHtml, skeletonCardsHtml, setMonitorControlsLocked } from "./js/components.js";
 import {
   pageMatches, pageLive, pageResults, pageTeam, pageMatch,
   pageTournament, pageBracket, pagePlayers, pageReports, pageMonitor,
@@ -20,6 +20,8 @@ const adminModalError = document.querySelector("#admin-modal-error");
 
 let activeRoute = "matches";
 let pageMeta = {};
+let pipelineCancelRequested = false;
+let monitorPipelineActive = false;
 
 const ROUTES = [
   { pattern: /^\/team\/([^/]+)$/, name: "team", handler: ([, slug]) => pageTeam(slug) },
@@ -82,6 +84,10 @@ function showAdminModalError(msg) {
   adminModalError.classList.remove("hidden");
 }
 
+function pipelineFinished() {
+  monitorPipelineActive = false;
+  setMonitorControlsLocked(false);
+}
 
 async function updateFreshnessBar() {
   const data = await loadFreshness();
@@ -124,7 +130,7 @@ async function navigate() {
     const html = await handler(match);
     content.innerHTML = html;
     void updateFreshnessBar();
-    if (name === "monitor") {
+    if (name === "monitor" && !monitorPipelineActive) {
       void resumePipelineProgressIfRunning();
     }
   } catch (e) {
@@ -185,6 +191,7 @@ async function ensureAdminAuth() {
 }
 
 async function adminReloadPlayers() {
+  if (monitorPipelineActive) return;
   const btn = document.querySelector("#btn-admin-players");
   if (btn) {
     btn.disabled = true;
@@ -196,7 +203,7 @@ async function adminReloadPlayers() {
   } catch (e) {
     showError(e.message || "Squad reload failed");
   } finally {
-    if (btn) {
+    if (btn && !monitorPipelineActive) {
       btn.disabled = false;
       btn.textContent = "Reload Kaggle squads";
     }
@@ -204,6 +211,7 @@ async function adminReloadPlayers() {
 }
 
 async function adminRefreshPredictions() {
+  if (monitorPipelineActive) return;
   const btn = document.querySelector("#btn-admin-predict");
   if (btn) {
     btn.disabled = true;
@@ -215,52 +223,84 @@ async function adminRefreshPredictions() {
   } catch (e) {
     showError(e.message || "Prediction refresh failed");
   } finally {
-    if (btn) {
+    if (btn && !monitorPipelineActive) {
       btn.disabled = false;
       btn.textContent = "Refresh predictions";
     }
   }
 }
 
-let pipelineCancelRequested = false;
-
 async function adminCancelPipeline() {
   const btn = document.getElementById("btn-pipeline-cancel");
-  if (btn?.disabled) return;
-  if (btn) btn.disabled = true;
+  if (btn?.disabled && btn.textContent === "Cancelling…") return;
+
+  abortPipelinePolling();
+  pipelineCancelRequested = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Cancelling…";
+  }
+
   try {
     const { updateProgressBar } = await import("./js/components.js");
     const resp = await request("/admin/pipeline/cancel", { method: "POST" });
-    if (resp?.status === "cancelled") {
+
+    if (resp?.status === "cancelled" || resp?.status === "no_active_run") {
+      pipelineFinished();
       pipelineCancelRequested = false;
       updateProgressBar("pipeline-progress", {
         running: false,
         cancelled: true,
         overall_progress_pct: 0,
-        message: resp.message || "Pipeline run was cancelled.",
+        message: resp.message || "All pipeline runs stopped. Scheduler paused 2 hours.",
       });
       return;
     }
-    pipelineCancelRequested = true;
+
     updateProgressBar("pipeline-progress", {
       running: true,
       cancellable: true,
       cancel_requested: true,
       overall_progress_pct: 0,
-      message: resp?.message || "Cancelling after current step…",
+      message: resp?.message || "Cancelling all runs…",
+    });
+
+    const result = await pollPipelineProgress((p) => updateProgressBar("pipeline-progress", p));
+    pipelineFinished();
+    pipelineCancelRequested = false;
+    updateProgressBar("pipeline-progress", {
+      running: false,
+      cancelled: true,
+      overall_progress_pct: result?.overall_progress_pct ?? 0,
+      elapsed_seconds: result?.elapsed_seconds,
+      message: "All pipeline runs stopped. Scheduler paused 2 hours.",
     });
   } catch (e) {
+    pipelineFinished();
     pipelineCancelRequested = false;
-    if (btn) btn.disabled = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Cancel";
+    }
     showError(e.message || "Could not cancel pipeline");
   }
 }
 
 async function adminRunPipeline(mode) {
+  if (monitorPipelineActive) {
+    showError("A pipeline is already running. Cancel it first.");
+    return;
+  }
+
   pipelineCancelRequested = false;
+  abortPipelinePolling();
+  monitorPipelineActive = true;
+  setMonitorControlsLocked(true);
+
   const { updateProgressBar } = await import("./js/components.js");
   const panel = document.getElementById("pipeline-progress");
   if (panel) panel.classList.remove("hidden");
+
   try {
     const start = await request(
       `/admin/pipeline/run?mode=${encodeURIComponent(mode)}`,
@@ -281,6 +321,10 @@ async function adminRunPipeline(mode) {
       });
     }
     const result = await pollPipelineProgress((p) => updateProgressBar("pipeline-progress", p));
+
+    if (result?.aborted) {
+      return;
+    }
     if (pipelineCancelRequested && !result?.running) {
       updateProgressBar("pipeline-progress", {
         running: false,
@@ -289,25 +333,47 @@ async function adminRunPipeline(mode) {
         elapsed_seconds: result?.elapsed_seconds,
         message: "Pipeline run was cancelled.",
       });
-      pipelineCancelRequested = false;
     } else if (result?.error) {
       showError(`Pipeline polling lost connection: ${result.error}`);
-    } else if (activeRoute === "monitor") {
-      await navigate();
+    } else if (!result?.running) {
+      updateProgressBar("pipeline-progress", {
+        running: false,
+        overall_progress_pct: 100,
+        elapsed_seconds: result?.elapsed_seconds,
+        message: "Pipeline complete",
+      });
     }
   } catch (e) {
     const msg = e.message || "Pipeline run failed";
-    if (msg.toLowerCase().includes("authentication")) {
-      showError("Admin session expired — click Run full pipeline and sign in again.");
+    if (e.status === 409 || msg.toLowerCase().includes("already running")) {
+      showError(msg);
+    } else if (msg.toLowerCase().includes("authentication")) {
+      showError("Admin session expired — sign in again from Monitor.");
     } else {
       showError(msg);
     }
+  } finally {
+    pipelineFinished();
+    pipelineCancelRequested = false;
   }
 }
 
 window.addEventListener("hashchange", navigate);
 
 document.addEventListener("click", (e) => {
+  if (monitorPipelineActive && !e.target.closest("#btn-pipeline-cancel")) {
+    const blocked =
+      e.target.closest("[data-pipeline-mode]") ||
+      e.target.closest("#btn-admin-predict") ||
+      e.target.closest("#btn-admin-players") ||
+      e.target.closest("#btn-repair-predictions");
+    if (blocked) {
+      e.preventDefault();
+      showError("Wait for the current pipeline to finish or click Cancel.");
+      return;
+    }
+  }
+
   if (e.target.closest("#btn-admin-predict")) {
     e.preventDefault();
     adminRefreshPredictions();
@@ -332,6 +398,7 @@ document.addEventListener("click", (e) => {
 });
 
 async function adminRepairPredictions() {
+  if (monitorPipelineActive) return;
   const btn = document.querySelector("#btn-repair-predictions");
   if (btn) {
     btn.disabled = true;
@@ -344,7 +411,7 @@ async function adminRepairPredictions() {
   } catch (err) {
     showError(err.message || "Repair failed");
   } finally {
-    if (btn) {
+    if (btn && !monitorPipelineActive) {
       btn.disabled = false;
       btn.textContent = "Repair missing predictions";
     }
@@ -366,27 +433,42 @@ nav?.addEventListener("click", (e) => {
 
 async function resumePipelineProgressIfRunning() {
   if (activeRoute !== "monitor" || !(await verifyAdminSession())) return;
+  if (monitorPipelineActive) return;
+
   try {
-    const { pollPipelineProgress } = await import("./js/api.js");
     const { updateProgressBar } = await import("./js/components.js");
     const data = await request("/admin/pipeline/progress", { noCache: true });
-    if (data?.running) {
-      pipelineCancelRequested = !!data.cancel_requested;
-      updateProgressBar("pipeline-progress", data);
-      const result = await pollPipelineProgress((p) => updateProgressBar("pipeline-progress", p));
-      if (pipelineCancelRequested && !result?.running) {
-        updateProgressBar("pipeline-progress", {
-          running: false,
-          cancelled: true,
-          overall_progress_pct: result?.overall_progress_pct ?? data.overall_progress_pct ?? 0,
-          elapsed_seconds: result?.elapsed_seconds ?? data.elapsed_seconds,
-          message: "Pipeline run was cancelled.",
-        });
-        pipelineCancelRequested = false;
-      } else if (activeRoute === "monitor") await navigate();
+    if (!data?.running) return;
+
+    monitorPipelineActive = true;
+    setMonitorControlsLocked(true);
+    pipelineCancelRequested = !!data.cancel_requested;
+    updateProgressBar("pipeline-progress", data);
+
+    const result = await pollPipelineProgress((p) => updateProgressBar("pipeline-progress", p));
+    if (result?.aborted) return;
+
+    if (pipelineCancelRequested && !result?.running) {
+      updateProgressBar("pipeline-progress", {
+        running: false,
+        cancelled: true,
+        overall_progress_pct: result?.overall_progress_pct ?? data.overall_progress_pct ?? 0,
+        elapsed_seconds: result?.elapsed_seconds ?? data.elapsed_seconds,
+        message: "Pipeline run was cancelled.",
+      });
+    } else if (!result?.running && (result?.overall_progress_pct ?? 0) >= 99) {
+      updateProgressBar("pipeline-progress", {
+        running: false,
+        overall_progress_pct: 100,
+        elapsed_seconds: result?.elapsed_seconds,
+        message: "Pipeline complete",
+      });
     }
   } catch {
     /* ignore */
+  } finally {
+    pipelineFinished();
+    pipelineCancelRequested = false;
   }
 }
 

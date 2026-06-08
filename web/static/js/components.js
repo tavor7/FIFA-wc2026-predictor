@@ -308,6 +308,19 @@ export function latencyStatus(ms) {
   return "bad";
 }
 
+export function setMonitorControlsLocked(locked) {
+  const panel = document.querySelector(".admin-panel");
+  if (!panel) return;
+  panel.classList.toggle("admin-locked", locked);
+  panel.querySelectorAll("button").forEach((btn) => {
+    if (btn.id === "btn-pipeline-cancel") {
+      btn.disabled = false;
+      return;
+    }
+    btn.disabled = locked;
+  });
+}
+
 export function adminPanelHtml() {
   return `<div class="admin-panel">
     <div class="admin-panel-head">
@@ -375,6 +388,7 @@ export function updateProgressBar(panelId, progress) {
       panel.querySelector(".progress-detail").textContent =
         progress.message || "Cancelled after the current step finished.";
       if (cancelBtn) cancelBtn.classList.add("hidden");
+      setMonitorControlsLocked(false);
       return;
     }
     if (progress?.overall_progress_pct >= 100) {
@@ -388,6 +402,7 @@ export function updateProgressBar(panelId, progress) {
         : "";
       panel.querySelector(".progress-detail").textContent = "Refreshing page…";
       if (cancelBtn) cancelBtn.classList.add("hidden");
+      setMonitorControlsLocked(false);
       return;
     }
     panel.classList.add("hidden");
@@ -396,6 +411,7 @@ export function updateProgressBar(panelId, progress) {
     return;
   }
   panel.classList.remove("hidden", "progress-cancelled");
+  setMonitorControlsLocked(true);
   if (progress.cancel_requested) {
     panel.classList.add("progress-cancelling");
   } else {

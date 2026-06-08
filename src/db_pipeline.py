@@ -105,7 +105,45 @@ def estimate_remaining_seconds(elapsed: float, overall_pct: float) -> Optional[i
         return None
     if overall_pct >= 99.5:
         return 0
-    return int(round(elapsed * (100.0 - overall_pct) / max(overall_pct, 0.1)))
+    if elapsed > 3600:
+        return None
+    remaining = int(round(elapsed * (100.0 - overall_pct) / max(overall_pct, 0.1)))
+    return min(remaining, 3600)
+
+
+def get_all_active_pipeline_run_ids() -> list[int]:
+    with get_connection() as conn:
+        rows = _execute(
+            conn,
+            """
+            SELECT id FROM pipeline_runs
+            WHERE finished_at IS NULL
+            ORDER BY started_at DESC
+            """,
+        ).fetchall()
+    return [int(dict(r)["id"]) for r in rows]
+
+
+def cleanup_stale_pipeline_runs(max_age_seconds: int = 7200) -> int:
+    """Force-finish orphaned runs older than max_age_seconds."""
+    cleared = 0
+    now = datetime.utcnow()
+    for rid in get_all_active_pipeline_run_ids():
+        with get_connection() as conn:
+            row = _execute(
+                conn, "SELECT started_at FROM pipeline_runs WHERE id = ?", (rid,)
+            ).fetchone()
+        if not row:
+            continue
+        started = dict(row).get("started_at")
+        try:
+            age = (now - datetime.fromisoformat(str(started).replace("Z", ""))).total_seconds()
+        except ValueError:
+            age = max_age_seconds + 1
+        if age >= max_age_seconds:
+            finish_pipeline_run(rid, "cancelled", error_message="Stale run cleared")
+            cleared += 1
+    return cleared
 
 
 def start_pipeline_run(service_name: str, triggered_by: str = "scheduler") -> int:
@@ -265,6 +303,7 @@ def is_pipeline_cancel_requested(run_id: int) -> bool:
 
 
 def get_active_pipeline_progress() -> Optional[dict[str, Any]]:
+    cleanup_stale_pipeline_runs(max_age_seconds=7200)
     with get_connection() as conn:
         row = _execute(
             conn,

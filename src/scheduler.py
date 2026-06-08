@@ -24,8 +24,17 @@ def _heartbeat() -> None:
 
 
 def _sync_fixtures_job() -> None:
+    from src.services.pipeline_orchestrator import is_scheduler_suppressed, pipeline_is_busy
+
+    if is_scheduler_suppressed() or pipeline_is_busy():
+        logger.info("Skipping scheduled fixture sync (suppressed or busy)")
+        return
     try:
-        _orch.run(mode="data_sync_only", triggered_by="scheduler")
+        result = _orch.run(mode="data_sync_only", triggered_by="scheduler")
+        if result.get("status") == "skipped":
+            return
+        if is_scheduler_suppressed() or pipeline_is_busy():
+            return
         _orch.run(mode="predictions_only", triggered_by="scheduler")
         set_scheduler_heartbeat()
         logger.info("Fixture sync pipeline completed")
@@ -34,10 +43,14 @@ def _sync_fixtures_job() -> None:
 
 
 def _sync_live_job() -> None:
+    from src.services.pipeline_orchestrator import is_scheduler_suppressed, pipeline_is_busy
+
+    if is_scheduler_suppressed() or pipeline_is_busy():
+        return
     try:
         live = db.get_live_matches()
         _orch.sync.sync_live()
-        if live:
+        if live and not is_scheduler_suppressed() and not pipeline_is_busy():
             _orch.run(mode="predictions_only", triggered_by="scheduler")
         set_scheduler_heartbeat()
         logger.info("Live sync completed")
@@ -46,6 +59,11 @@ def _sync_live_job() -> None:
 
 
 def _daily_full_job() -> None:
+    from src.services.pipeline_orchestrator import is_scheduler_suppressed, pipeline_is_busy
+
+    if is_scheduler_suppressed() or pipeline_is_busy():
+        logger.info("Skipping daily full pipeline (suppressed or busy)")
+        return
     try:
         _orch.run(mode="full_pipeline", triggered_by="scheduler")
         set_scheduler_heartbeat()

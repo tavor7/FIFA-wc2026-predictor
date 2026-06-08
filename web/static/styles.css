@@ -1347,6 +1347,16 @@ main .card + .section {
   margin-top: 0.85rem;
 }
 
+.admin-panel.admin-locked .admin-panel-body button:not(#btn-pipeline-cancel) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.admin-panel.admin-locked .admin-panel-hint::after {
+  content: " · Pipeline running — cancel or wait to unlock";
+  color: var(--warn, #fbbf24);
+}
+
 .btn-pipeline-main {
   width: 100%;
   padding: 0.7rem 1rem;

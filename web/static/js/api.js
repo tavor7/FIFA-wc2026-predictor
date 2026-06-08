@@ -199,14 +199,29 @@ export async function loadFreshness() {
   }
 }
 
+let pipelinePollGeneration = 0;
+
+export function abortPipelinePolling() {
+  pipelinePollGeneration += 1;
+}
+
 export async function pollPipelineProgress(onUpdate, intervalMs = 800) {
+  const generation = pipelinePollGeneration;
   let pollErrors = 0;
   const maxPollErrors = 40;
 
   return new Promise((resolve) => {
     const poll = async () => {
+      if (generation !== pipelinePollGeneration) {
+        resolve({ running: false, aborted: true });
+        return;
+      }
       try {
         const data = await request("/admin/pipeline/progress", { noCache: true });
+        if (generation !== pipelinePollGeneration) {
+          resolve({ running: false, aborted: true });
+          return;
+        }
         pollErrors = 0;
         onUpdate(data);
         if (data.running) {
