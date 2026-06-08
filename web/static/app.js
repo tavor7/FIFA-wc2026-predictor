@@ -1,4 +1,7 @@
-import { request, loadFreshness, lastResponseMeta, adminLogin, getAdminToken, pollPipelineProgress } from "./js/api.js";
+import {
+  request, loadFreshness, lastResponseMeta, adminLogin, getAdminToken,
+  verifyAdminSession, pollPipelineProgress,
+} from "./js/api.js";
 import { freshnessBarHtml, skeletonCardsHtml } from "./js/components.js";
 import {
   pageMatches, pageLive, pageResults, pageTeam, pageMatch,
@@ -119,7 +122,7 @@ async function navigate() {
 }
 
 async function ensureAdminAuth() {
-  if (getAdminToken()) return true;
+  if (await verifyAdminSession()) return true;
   if (!adminModal || !adminForm) return false;
 
   showAdminModalError(null);
@@ -272,7 +275,12 @@ async function adminRunPipeline(mode) {
       await navigate();
     }
   } catch (e) {
-    showError(e.message || "Pipeline run failed");
+    const msg = e.message || "Pipeline run failed";
+    if (msg.toLowerCase().includes("authentication")) {
+      showError("Admin session expired — click Run full pipeline and sign in again.");
+    } else {
+      showError(msg);
+    }
   }
 }
 

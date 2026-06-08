@@ -247,5 +247,10 @@ def get_monitor_screen() -> dict[str, Any]:
             "teams": counts.get("teams", 0),
             "missing_predictions": counts.get("missing_predictions", 0),
         },
+        "success_criteria": {
+            "all_predictions_present": counts.get("missing_predictions", 0) == 0,
+            "all_explanations_present": None,
+            "cache_valid": None,
+        },
         "last_updated": datetime.utcnow().isoformat(),
     }

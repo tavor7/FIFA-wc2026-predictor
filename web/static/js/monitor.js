@@ -1,4 +1,4 @@
-import { request, adminRequest, getAdminToken } from "./api.js";
+import { request, adminRequest, verifyAdminSession } from "./api.js";
 import {
   adminPanelHtml,
   dataFreshnessBadge,
@@ -50,7 +50,8 @@ function criteriaBadges(criteria) {
     ["Predictions", criteria.all_predictions_present],
     ["Explanations", criteria.all_explanations_present],
     ["Cache valid", criteria.cache_valid],
-  ];
+  ].filter(([, ok]) => ok !== null && ok !== undefined);
+  if (!items.length) return "";
   return `<div class="criteria-row">${items
     .map(
       ([label, ok]) =>
@@ -61,15 +62,24 @@ function criteriaBadges(criteria) {
 
 export async function pageMonitorOverview() {
   const [status, freshness, summary, calibration] = await Promise.all([
-    request("/monitor/status"),
+    request("/monitor/status").catch(() => null),
     request("/meta/freshness").catch(() => null),
     adminRequest("/admin/audit/summary"),
     request("/evaluation/calibration?limit=30").catch(() => null),
   ]);
+  if (!status) {
+    return (
+      pageHeaderHtml("Diagnostics console", "System health, data coverage, and success criteria") +
+      monitorNavHtml("overview") +
+      adminPanelHtml() +
+      `<p class="empty">Could not load monitor status. The database may be busy — try again in a minute.</p>`
+    );
+  }
   window.setPageMeta?.({ lastUpdated: status.last_updated, showTimestamp: false });
   const dep = status.deployment || {};
   const counts = status.counts || status.table_counts || {};
   const pred = summary?.predictions || {};
+  const criteria = summary?.success_criteria || status.success_criteria;
   const keys = status.api_keys || {};
 
   const freshnessRows = (freshness?.entities || []).map(
@@ -100,7 +110,8 @@ export async function pageMonitorOverview() {
     monitorNavHtml("overview") +
     adminPanelHtml() +
     progressBarHtml("pipeline-progress") +
-    (summary?.success_criteria ? criteriaBadges(summary.success_criteria) : !getAdminToken() ? adminSignInHint() : "") +
+    (criteria ? criteriaBadges(criteria) : "") +
+    (!summary && !(await verifyAdminSession()) ? adminSignInHint() : "") +
     (status.last_updated ? `<div class="monitor-updated">${dataFreshnessBadge(status.last_updated)}</div>` : "") +
     section(
       "Deployment",
@@ -140,7 +151,7 @@ export async function pageMonitorOverview() {
 }
 
 export async function pageMonitorPipeline() {
-  if (!getAdminToken()) {
+  if (!(await verifyAdminSession())) {
     return adminRequiredPage("Pipeline history", "Step diagram and run timeline", "pipeline");
   }
   const [statusRaw, runsRaw] = await Promise.all([
@@ -206,7 +217,7 @@ export async function pageMonitorPipeline() {
 }
 
 export async function pageMonitorAudit(offset = 0) {
-  if (!getAdminToken()) {
+  if (!(await verifyAdminSession())) {
     return adminRequiredPage("Prediction audit", "Per-match prediction completeness", "audit");
   }
   const data = await adminRequest(`/admin/audit/predictions?limit=50&offset=${offset}`);
@@ -262,7 +273,7 @@ export async function pageMonitorAudit(offset = 0) {
 }
 
 export async function pageMonitorDataFlow() {
-  if (!getAdminToken()) {
+  if (!(await verifyAdminSession())) {
     return adminRequiredPage("Data flow", "Where data is lost between pipeline stages", "data-flow");
   }
   const flow = await adminRequest("/admin/audit/data-flow");
@@ -299,7 +310,7 @@ export async function pageMonitorDataFlow() {
 }
 
 export async function pageMonitorPerformance() {
-  if (!getAdminToken()) {
+  if (!(await verifyAdminSession())) {
     return adminRequiredPage("Performance", "API and database latency", "performance");
   }
   const perf = await adminRequest("/admin/audit/performance");
@@ -347,7 +358,7 @@ export async function pageMonitorPerformance() {
 }
 
 export async function pageMonitorCache() {
-  if (!getAdminToken()) {
+  if (!(await verifyAdminSession())) {
     return adminRequiredPage("Cache validation", "Stale, orphan, and missing UI cache entries", "cache");
   }
   const cache = await adminRequest("/admin/audit/cache");
@@ -389,7 +400,7 @@ export async function pageMonitorCache() {
 }
 
 export async function pageMonitorDataQuality() {
-  if (!getAdminToken()) {
+  if (!(await verifyAdminSession())) {
     return adminRequiredPage("Data quality", "Team squads, ratings, injuries, and fixtures", "data-quality");
   }
   const dq = await adminRequest("/admin/audit/data-quality");

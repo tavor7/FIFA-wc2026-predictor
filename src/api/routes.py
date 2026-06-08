@@ -419,6 +419,11 @@ def admin_auth(body: dict[str, str]) -> dict[str, Any]:
     return result
 
 
+@router.get("/admin/auth/verify")
+def admin_auth_verify(_auth: None = Depends(require_admin)) -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @router.get("/admin/pipeline/status")
 def admin_pipeline_status(_auth: None = Depends(require_admin)) -> dict[str, Any]:
     from src.db_pipeline import PIPELINE_STEPS, STEP_LABELS

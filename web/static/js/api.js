@@ -82,14 +82,38 @@ export async function adminLogin(password) {
   return data;
 }
 
+const PUBLIC_ADMIN_GETS = new Set(["/admin/pipeline/progress"]);
+
+function isAdminAuthError(message, status) {
+  const msg = String(message || "").toLowerCase();
+  return (
+    status === 401 ||
+    msg.includes("401") ||
+    msg.includes("unauthorized") ||
+    msg.includes("authentication required") ||
+    msg.includes("invalid or expired admin token")
+  );
+}
+
+/** Return true only when a stored admin token is still valid. */
+export async function verifyAdminSession() {
+  if (!getAdminToken()) return false;
+  try {
+    await request("/admin/auth/verify", { noCache: true });
+    return true;
+  } catch {
+    setAdminToken(null);
+    return false;
+  }
+}
+
 /** Admin-only GET: skips the network call when not signed in (avoids 401 noise). */
 export async function adminRequest(path, options = {}) {
-  if (!getAdminToken()) return null;
+  if (!(await verifyAdminSession())) return null;
   try {
     return await request(path, { noCache: true, ...options });
   } catch (err) {
-    const msg = String(err?.message || "");
-    if (msg.includes("401") || msg.toLowerCase().includes("unauthorized")) {
+    if (isAdminAuthError(err?.message, err?.status)) {
       setAdminToken(null);
       return null;
     }
@@ -110,8 +134,13 @@ export async function request(path, options = {}) {
   }
 
   const headers = { "Content-Type": "application/json", ...options.headers };
+  const pathBase = path.split("?")[0];
   const token = getAdminToken();
-  if (token && (method !== "GET" || path.startsWith("/admin"))) {
+  const sendAuth =
+    token &&
+    (method !== "GET" || path.startsWith("/admin")) &&
+    !PUBLIC_ADMIN_GETS.has(pathBase);
+  if (sendAuth) {
     headers.Authorization = `Bearer ${token}`;
   }
 
@@ -142,7 +171,19 @@ export async function request(path, options = {}) {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+    let detail = text || `HTTP ${res.status}`;
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed?.detail) detail = String(parsed.detail);
+    } catch {
+      /* plain text error */
+    }
+    if (res.status === 401 && path.startsWith("/admin")) {
+      setAdminToken(null);
+    }
+    const err = new Error(detail);
+    err.status = res.status;
+    throw err;
   }
   const data = await res.json();
   if (useCache) writeCache(path, data);
