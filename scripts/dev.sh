@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local dev server — fast iteration without Render deploys.
+# Local API server — same Supabase DB and .env as Render (pipeline updates production data).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -27,25 +27,28 @@ source .venv/bin/activate
 
 pip install -q -r requirements.txt
 
-# Load .env then override for local-friendly defaults
+# Same environment file as Render (DATABASE_URL, API keys, ADMIN_PASSWORD, …)
 set -a
 # shellcheck disable=SC1091
 [[ -f .env ]] && source .env
 set +a
 
-export ENABLE_SCHEDULER="${ENABLE_SCHEDULER:-false}"
-export STARTUP_SEED="${STARTUP_SEED:-true}"
 export PORT="${PORT:-8000}"
+export GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo local)}"
 
-# Default: SQLite in data/football.db (fast, isolated from production).
-# To use your Supabase DB locally instead: LOCAL_USE_SUPABASE=1 ./scripts/dev.sh
-if [[ "${LOCAL_USE_SUPABASE:-}" != "1" ]]; then
+if [[ "${LOCAL_USE_SQLITE:-}" == "1" ]]; then
   export DATABASE_URL=
-  echo "Local DB: SQLite → data/football.db"
+  echo "Mode: SQLite sandbox → data/football.db (NOT shared with Render)"
 else
-  echo "Local DB: Supabase (DATABASE_URL from .env)"
+  if [[ -z "${DATABASE_URL:-}" ]]; then
+    echo "ERROR: DATABASE_URL is not set in .env"
+    echo "  Use the same Supabase URL as Render, or run with LOCAL_USE_SQLITE=1 for an isolated DB."
+    exit 1
+  fi
+  echo "Mode: Supabase (shared with Render — pipeline & sync update production data)"
 fi
 
+echo "Scheduler: ${ENABLE_SCHEDULER:-false}  |  Startup seed: ${STARTUP_SEED:-true}"
 echo "API:  http://127.0.0.1:${PORT}"
 echo "UI:   http://127.0.0.1:${PORT}/#/monitor"
 echo "Stop: Ctrl+C"
