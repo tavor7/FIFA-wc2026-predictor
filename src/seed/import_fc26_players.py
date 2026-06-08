@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import pandas as pd
 
@@ -158,11 +158,14 @@ def import_fc26_players(
     csv_path: Optional[Path] = None,
     squad_size: Optional[int] = None,
     download: bool = True,
+    should_cancel: Optional[Callable[[], bool]] = None,
 ) -> dict[str, Any]:
     """
     Load Kaggle FC26 ratings for WC 2026 national teams.
     Dataset: rovnez/fc-26-fifa-26-player-data (110 columns, ~18k players).
     """
+    from src.services.pipeline_cancel import PipelineCancelled
+
     db.init_db()
     squad_size = squad_size if squad_size is not None else squad_size_target()
     path = csv_path or FC26_CSV_PATH
@@ -189,6 +192,8 @@ def import_fc26_players(
     per_team_counts: dict[str, int] = {}
 
     for team_name, group in df.groupby("team"):
+        if should_cancel and should_cancel():
+            raise PipelineCancelled()
         team_id = _resolve_team_id(team_name)
         teams_touched.add(team_name)
         squad = group.head(squad_size)

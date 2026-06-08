@@ -219,6 +219,51 @@ def finish_pipeline_run(
             _execute(conn, "DELETE FROM pipeline_progress WHERE run_id = ?", (run_id,))
 
 
+def get_active_pipeline_run_id() -> Optional[int]:
+    """Return run_id of the in-progress pipeline, if any."""
+    with get_connection() as conn:
+        row = _execute(
+            conn,
+            """
+            SELECT p.run_id
+            FROM pipeline_progress p
+            JOIN pipeline_runs r ON r.id = p.run_id
+            WHERE r.finished_at IS NULL
+            ORDER BY p.updated_at DESC
+            LIMIT 1
+            """,
+        ).fetchone()
+    return int(dict(row)["run_id"]) if row else None
+
+
+def mark_pipeline_cancel_requested(run_id: int) -> None:
+    now = datetime.utcnow().isoformat()
+    with get_connection() as conn:
+        _execute(
+            conn,
+            """
+            UPDATE pipeline_progress SET
+                cancel_requested = 1,
+                message = 'Cancelling after current step…',
+                updated_at = ?
+            WHERE run_id = ?
+            """,
+            (now, run_id),
+        )
+
+
+def is_pipeline_cancel_requested(run_id: int) -> bool:
+    with get_connection() as conn:
+        row = _execute(
+            conn,
+            "SELECT cancel_requested FROM pipeline_progress WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+    if not row:
+        return False
+    return bool(dict(row).get("cancel_requested"))
+
+
 def get_active_pipeline_progress() -> Optional[dict[str, Any]]:
     with get_connection() as conn:
         row = _execute(
@@ -268,10 +313,12 @@ def get_active_pipeline_progress() -> Optional[dict[str, Any]]:
             break
 
     remaining = estimate_remaining_seconds(elapsed, overall)
+    cancel_requested = bool(d.get("cancel_requested"))
 
     return {
         "running": True,
         "cancellable": True,
+        "cancel_requested": cancel_requested,
         "run_id": d["run_id"],
         "service_name": service_name,
         "mode_label": MODE_LABELS.get(service_name, service_name.replace("_", " ")),

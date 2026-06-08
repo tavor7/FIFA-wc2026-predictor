@@ -380,7 +380,8 @@ CREATE TABLE IF NOT EXISTS pipeline_progress (
     step_progress_pct REAL DEFAULT 0,
     overall_progress_pct REAL DEFAULT 0,
     message TEXT,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    cancel_requested INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS home_view_cache (

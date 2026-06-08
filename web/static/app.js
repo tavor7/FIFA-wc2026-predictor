@@ -230,14 +230,24 @@ async function adminCancelPipeline() {
   if (btn) btn.disabled = true;
   try {
     const { updateProgressBar } = await import("./js/components.js");
-    await request("/admin/pipeline/cancel", { method: "POST" });
+    const resp = await request("/admin/pipeline/cancel", { method: "POST" });
+    if (resp?.status === "cancelled") {
+      pipelineCancelRequested = false;
+      updateProgressBar("pipeline-progress", {
+        running: false,
+        cancelled: true,
+        overall_progress_pct: 0,
+        message: resp.message || "Pipeline run was cancelled.",
+      });
+      return;
+    }
     pipelineCancelRequested = true;
     updateProgressBar("pipeline-progress", {
       running: true,
       cancellable: true,
       cancel_requested: true,
       overall_progress_pct: 0,
-      message: "Cancelling after current step…",
+      message: resp?.message || "Cancelling after current step…",
     });
   } catch (e) {
     pipelineCancelRequested = false;

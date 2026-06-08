@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from src import db
 from src import db_extended as ext
@@ -19,6 +19,13 @@ from src.sync_live_data import sync_live_data
 from src.sync_matches import sync_all_matches
 
 logger = logging.getLogger(__name__)
+
+
+def _check_cancel(should_cancel: Optional[Callable[[], bool]]) -> None:
+    if should_cancel and should_cancel():
+        from src.services.pipeline_cancel import PipelineCancelled
+
+        raise PipelineCancelled()
 
 
 def _log_sync(job: str, result: dict[str, Any], source: str = "api-football") -> None:
@@ -44,27 +51,37 @@ class DataSyncService:
         self.client = client
         self.fast = fast
 
-    def sync_fixtures(self) -> dict[str, Any]:
+    def sync_fixtures(self, should_cancel: Optional[Callable[[], bool]] = None) -> dict[str, Any]:
+        _check_cancel(should_cancel)
         if self.fast:
             # Bundled seeds cover the schedule; light API refresh only
             result = sync_all_matches(days_ahead=21, days_back=7)
+            _check_cancel(should_cancel)
             sync_standings()
         else:
             result = sync_all_matches(days_ahead=60, days_back=14)
+            _check_cancel(should_cancel)
             sync_standings()
             sync_bracket()
         ext.upsert_data_freshness("fixtures", source="api-football")
         _log_sync("sync_fixtures", result)
         return result
 
-    def sync_injuries(self) -> dict[str, Any]:
+    def sync_injuries(self, should_cancel: Optional[Callable[[], bool]] = None) -> dict[str, Any]:
+        _check_cancel(should_cancel)
         result = sync_injuries()
         ext.upsert_data_freshness("injuries", source="api-football")
         _log_sync("sync_injuries", result)
         return result
 
-    def ensure_fc26_squads(self, *, force: bool = False) -> dict[str, Any]:
+    def ensure_fc26_squads(
+        self,
+        *,
+        force: bool = False,
+        should_cancel: Optional[Callable[[], bool]] = None,
+    ) -> dict[str, Any]:
         """Load top-N Kaggle FC26 players per nation (re-import when stale)."""
+        _check_cancel(should_cancel)
         from src.seed.import_fc26_players import (
             FC26_CSV_PATH,
             import_fc26_players,
@@ -88,21 +105,24 @@ class DataSyncService:
         result = import_fc26_players(
             squad_size=squad_size_target(),
             download=not FC26_CSV_PATH.is_file(),
+            should_cancel=should_cancel,
         )
         result["status"] = "imported"
         _log_sync("import_fc26_players", result, source="kaggle_fc26")
         return result
 
-    def sync_team_stats(self) -> dict[str, Any]:
-        fc26 = self.ensure_fc26_squads()
+    def sync_team_stats(self, should_cancel: Optional[Callable[[], bool]] = None) -> dict[str, Any]:
+        fc26 = self.ensure_fc26_squads(should_cancel=should_cancel)
+        _check_cancel(should_cancel)
         # Kaggle has <26 players for some nations — API fills the rest
-        result = sync_squads(fill_thin_squads=True, thin_teams_only=self.fast)
+        result = sync_squads(fill_thin_squads=True, thin_teams_only=self.fast, should_cancel=should_cancel)
         ext.upsert_data_freshness("team_stats", source="api-football")
         ext.upsert_data_freshness("player_stats", source="api-football")
         _log_sync("sync_team_stats", result)
         return {"fc26": fc26, **result}
 
-    def sync_live(self) -> dict[str, Any]:
+    def sync_live(self, should_cancel: Optional[Callable[[], bool]] = None) -> dict[str, Any]:
+        _check_cancel(should_cancel)
         live = db.get_live_matches()
         result = sync_live_data()
         if live or result.get("live_from_api", 0) > 0:

@@ -18,6 +18,7 @@ from src.services.data_sync_service import DataSyncService
 from src.services.feature_generation_service import FeatureGenerationService
 from src.services.prediction_generation_service import PredictionGenerationService
 from src.services.prediction_validation_service import validate_prediction
+from src.services.pipeline_cancel import PipelineCancelled
 from src.services.pipeline_planner import apply_skipped_progress, plan_pipeline_steps
 from src.services.ui_cache_service import UICacheService
 from src.cache.response_cache import invalidate_all
@@ -29,27 +30,43 @@ _run_lock = threading.Lock()
 _cancel_requested: set[int] = set()
 
 
-class PipelineCancelled(Exception):
-    """Raised when the user requests cancellation."""
-
-
 def request_pipeline_cancel(run_id: Optional[int] = None) -> dict[str, Any]:
-    """Request stop; the current step finishes then the run exits."""
+    """Request stop; in-process worker exits after the current sub-task."""
     global _active_run_id
     with _run_lock:
-        rid = run_id or _active_run_id
+        rid = run_id or _active_run_id or pipe_db.get_active_pipeline_run_id()
         if rid is None:
             return {"status": "no_active_run", "message": "No pipeline is running"}
+        worker_active = _active_run_id == rid
         _cancel_requested.add(rid)
+
+    pipe_db.mark_pipeline_cancel_requested(rid)
+
+    if not worker_active:
+        pipe_db.finish_pipeline_run(
+            rid,
+            "cancelled",
+            error_message="Cancelled by user",
+            started_at=None,
+        )
+        logger.info("Pipeline run %s force-cancelled (no active worker)", rid)
         return {
-            "status": "cancelling",
+            "status": "cancelled",
             "run_id": rid,
-            "message": "Cancel requested — will stop after the current step",
+            "message": "Pipeline run stopped",
         }
+
+    return {
+        "status": "cancelling",
+        "run_id": rid,
+        "message": "Cancel requested — stopping current step",
+    }
 
 
 def is_cancel_requested(run_id: int) -> bool:
-    return run_id in _cancel_requested
+    if run_id in _cancel_requested:
+        return True
+    return pipe_db.is_pipeline_cancel_requested(run_id)
 
 
 def _clear_cancel(run_id: int) -> None:
@@ -207,11 +224,13 @@ class PipelineOrchestrator:
             def _between_steps() -> None:
                 _check_cancel(run_id)
 
+            cancel_fn = lambda: is_cancel_requested(run_id)
+
             if 0 in steps_to_run:
                 _between_steps()
                 with track_step(0) as sm:
                     with heartbeat(0, "A", STEP_LABELS["A"]):
-                        r = self.sync.sync_fixtures()
+                        r = self.sync.sync_fixtures(should_cancel=cancel_fn)
                     sm.records_read = r.get("total_synced", 0) or r.get("matches", 0) or 0
                     sm.records_written = r.get("updated", 0) or r.get("total_synced", 0) or 0
                     records_read += sm.records_read
@@ -222,7 +241,7 @@ class PipelineOrchestrator:
                 _between_steps()
                 with track_step(1) as sm:
                     with heartbeat(1, "B", STEP_LABELS["B"]):
-                        r = self.sync.sync_team_stats()
+                        r = self.sync.sync_team_stats(should_cancel=cancel_fn)
                     sm.records_written = r.get("updated", 0) or r.get("players", 0) or 0
                     records_written += sm.records_written
                 progress(1, "B", 100, "Teams synced")
@@ -231,7 +250,7 @@ class PipelineOrchestrator:
                 _between_steps()
                 with track_step(2) as sm:
                     with heartbeat(2, "C", STEP_LABELS["C"]):
-                        r = self.sync.sync_injuries()
+                        r = self.sync.sync_injuries(should_cancel=cancel_fn)
                     sm.records_written = r.get("updated", 0) or 0
                     records_written += sm.records_written
                 progress(2, "C", 100, "Injuries synced")
@@ -240,7 +259,7 @@ class PipelineOrchestrator:
                 _between_steps()
                 with track_step(3) as sm:
                     with heartbeat(3, "D", STEP_LABELS["D"]):
-                        r = self.sync.sync_live()
+                        r = self.sync.sync_live(should_cancel=cancel_fn)
                     sm.records_written = r.get("updated", 0) or 0
                     records_read += sm.records_read
                     records_written += sm.records_written

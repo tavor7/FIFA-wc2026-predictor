@@ -762,9 +762,17 @@ def _ensure_pipeline_tables(conn: Any) -> None:
                 step_progress_pct REAL DEFAULT 0,
                 overall_progress_pct REAL DEFAULT 0,
                 message TEXT,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                cancel_requested INTEGER DEFAULT 0
             )
         """)
+
+    if _table_exists(conn, "pipeline_progress"):
+        prog_cols = _table_columns(conn, "pipeline_progress")
+        if "cancel_requested" not in prog_cols:
+            conn.execute(
+                "ALTER TABLE pipeline_progress ADD COLUMN cancel_requested INTEGER DEFAULT 0"
+            )
 
     if not _table_exists(conn, "home_view_cache"):
         conn.execute("""

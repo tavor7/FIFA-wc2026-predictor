@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from src import config, db
 from src import db_extended as dbx
@@ -83,8 +83,11 @@ def sync_squads(
     *,
     fill_thin_squads: bool = False,
     thin_teams_only: bool = False,
+    should_cancel: Optional[Callable[[], bool]] = None,
 ) -> dict[str, Any]:
     """Fetch squad data for WC 2026 teams and fill gaps where Kaggle FC26 data is thin."""
+    from src.services.pipeline_cancel import PipelineCancelled
+
     client = client or APIClient()
     season = season if season is not None else config.SEASON
 
@@ -97,6 +100,8 @@ def sync_squads(
     errors = 0
 
     for api_team_id, team_name in team_map.items():
+        if should_cancel and should_cancel():
+            raise PipelineCancelled()
         try:
             internal_team_id = dbx.upsert_team(team_name, api_team_id=api_team_id)
             fc26_count = dbx.count_fc26_players_for_team(internal_team_id)
