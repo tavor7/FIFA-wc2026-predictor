@@ -22,6 +22,7 @@ const adminModalError = document.querySelector("#admin-modal-error");
 let activeRoute = "matches";
 let pageMeta = {};
 let pipelineCancelRequested = false;
+let retrainCancelRequested = false;
 let monitorPipelineActive = false;
 let monitorRetrainActive = false;
 
@@ -323,6 +324,67 @@ async function adminCancelPipeline() {
   }
 }
 
+async function adminCancelRetrain() {
+  const btn = document.getElementById("btn-retrain-cancel");
+  if (btn?.disabled && btn.textContent === "Stopping…") return;
+
+  retrainCancelRequested = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Stopping…";
+  }
+
+  try {
+    const { updateProgressBar } = await import("./js/components.js");
+    const resp = await request("/admin/model/retrain/cancel", { method: "POST" });
+
+    if (resp?.status === "cancelled" || resp?.status === "no_active_run") {
+      retrainFinished();
+      retrainCancelRequested = false;
+      updateProgressBar("retrain-progress", {
+        running: false,
+        cancelled: true,
+        mode_label: "Model training",
+        overall_progress_pct: 0,
+        message: resp.message || "Training stopped.",
+      });
+      return;
+    }
+
+    updateProgressBar("retrain-progress", {
+      running: true,
+      cancellable: true,
+      cancel_requested: true,
+      mode_label: "Model training",
+      overall_progress_pct: 0,
+      message: resp?.message || "Stopping after current step…",
+    });
+
+    const result = await pollRetrainProgress((p) => updateProgressBar("retrain-progress", p));
+    retrainFinished();
+    retrainCancelRequested = false;
+
+    if (result?.aborted) return;
+
+    updateProgressBar("retrain-progress", {
+      running: false,
+      cancelled: true,
+      mode_label: "Model training",
+      overall_progress_pct: result?.overall_progress_pct ?? 0,
+      elapsed_seconds: result?.elapsed_seconds,
+      message: result?.message || "Training stopped by user.",
+    });
+  } catch (e) {
+    retrainFinished();
+    retrainCancelRequested = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Stop training";
+    }
+    showError(e.message || "Could not stop training");
+  }
+}
+
 async function adminRunPipeline(mode) {
   if (monitorIsBusy()) {
     showError(monitorRetrainActive
@@ -421,6 +483,7 @@ async function adminRetrainModels() {
     await request("/admin/model/retrain", { method: "POST" });
     updateProgressBar("retrain-progress", {
       running: true,
+      cancellable: true,
       mode_label: "Model training",
       overall_progress_pct: 2,
       step_label: "Starting",
@@ -432,6 +495,18 @@ async function adminRetrainModels() {
     const result = await pollRetrainProgress((p) => updateProgressBar("retrain-progress", p));
 
     if (result?.aborted) return;
+
+    if (result?.status === "cancelled" || result?.cancelled) {
+      updateProgressBar("retrain-progress", {
+        running: false,
+        cancelled: true,
+        mode_label: "Model training",
+        overall_progress_pct: result.overall_progress_pct ?? 0,
+        elapsed_seconds: result.elapsed_seconds,
+        message: result.message || "Training stopped by user.",
+      });
+      return;
+    }
 
     if (result?.status === "failed" || result?.error) {
       updateProgressBar("retrain-progress", {
@@ -491,7 +566,7 @@ document.addEventListener("click", (e) => {
       return;
     }
   }
-  if (monitorRetrainActive) {
+  if (monitorRetrainActive && !e.target.closest("#btn-retrain-cancel")) {
     const blocked =
       e.target.closest("[data-pipeline-mode]") ||
       e.target.closest("#btn-admin-predict") ||
@@ -500,7 +575,7 @@ document.addEventListener("click", (e) => {
       e.target.closest("#btn-repair-predictions");
     if (blocked) {
       e.preventDefault();
-      showError("Wait for model training to finish.");
+      showError("Wait for model training to finish or click Stop training.");
       return;
     }
   }
@@ -530,6 +605,10 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("#btn-pipeline-cancel")) {
     e.preventDefault();
     adminCancelPipeline();
+  }
+  if (e.target.closest("#btn-retrain-cancel")) {
+    e.preventDefault();
+    adminCancelRetrain();
   }
   if (e.target.closest("#btn-repair-predictions")) {
     e.preventDefault();
@@ -627,12 +706,22 @@ async function resumeRetrainProgressIfRunning() {
 
     monitorRetrainActive = true;
     setMonitorControlsLocked(true);
+    retrainCancelRequested = !!data.cancel_requested;
     updateProgressBar("retrain-progress", data);
 
     const result = await pollRetrainProgress((p) => updateProgressBar("retrain-progress", p));
     if (result?.aborted) return;
 
-    if (result?.status === "failed") {
+    if (result?.status === "cancelled" || result?.cancelled || (retrainCancelRequested && !result?.running)) {
+      updateProgressBar("retrain-progress", {
+        running: false,
+        cancelled: true,
+        mode_label: "Model training",
+        overall_progress_pct: result?.overall_progress_pct ?? data.overall_progress_pct ?? 0,
+        elapsed_seconds: result?.elapsed_seconds ?? data.elapsed_seconds,
+        message: result?.message || "Training stopped by user.",
+      });
+    } else if (result?.status === "failed") {
       updateProgressBar("retrain-progress", {
         running: false,
         failed: true,
@@ -656,6 +745,7 @@ async function resumeRetrainProgressIfRunning() {
     /* ignore */
   } finally {
     retrainFinished();
+    retrainCancelRequested = false;
   }
 }
 

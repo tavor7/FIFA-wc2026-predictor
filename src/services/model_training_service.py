@@ -13,10 +13,17 @@ from src.model_storage import save_models_after_train
 from src.models.ensemble import EnsemblePredictor, get_or_create_ensemble
 from src.models.model_registry import register_model_run
 from src.models.weight_optimizer import optimize_ensemble_weights
+from src.services.pipeline_cancel import ModelTrainingCancelled
 
 logger = logging.getLogger(__name__)
 
 ProgressCb = Callable[[str, float, str], None]
+CancelFn = Callable[[], bool]
+
+
+def _check_cancel(should_cancel: Optional[CancelFn]) -> None:
+    if should_cancel and should_cancel():
+        raise ModelTrainingCancelled()
 
 
 @contextmanager
@@ -28,6 +35,7 @@ def _step_heartbeat(
     label: str,
     *,
     interval_s: float = 4.0,
+    should_cancel: Optional[CancelFn] = None,
 ) -> Iterator[None]:
     """Keep progress messages fresh during blocking work (no rising ETA math)."""
     stop = threading.Event()
@@ -37,6 +45,9 @@ def _step_heartbeat(
         tick = 0
         span = max(end_pct - start_pct - 1, 1)
         while not stop.wait(interval_s):
+            if should_cancel and should_cancel():
+                stop.set()
+                return
             tick += 1
             pct = min(end_pct - 1, start + span * (1 - 0.85**tick))
             elapsed = int(tick * interval_s)
@@ -50,6 +61,7 @@ def _step_heartbeat(
     finally:
         stop.set()
         thread.join(timeout=1.0)
+        _check_cancel(should_cancel)
 
 
 class ModelTrainingService:
@@ -59,8 +71,10 @@ class ModelTrainingService:
     def retrain_and_predict(
         self,
         progress_cb: Optional[ProgressCb] = None,
+        should_cancel: Optional[CancelFn] = None,
     ) -> dict[str, Any]:
         def report(step: str, pct: float, msg: str) -> None:
+            _check_cancel(should_cancel)
             if progress_cb:
                 progress_cb(step, pct, msg)
 
@@ -74,10 +88,17 @@ class ModelTrainingService:
             pct = round(done / max(total, 1) * 75, 1)
             report("rf", pct, f"Building training features {done}/{total}")
 
-        dataset = build_training_dataset(progress_cb=feature_progress)
+        dataset = build_training_dataset(
+            progress_cb=feature_progress,
+            should_cancel=should_cancel,
+        )
+        _check_cancel(should_cancel)
 
-        with _step_heartbeat(report, "rf", 78, 95, "Fitting Random Forest"):
+        with _step_heartbeat(
+            report, "rf", 78, 95, "Fitting Random Forest", should_cancel=should_cancel,
+        ):
             rf_result = self.ensemble.goal_model.train_model(dataset=dataset)
+        _check_cancel(should_cancel)
         if rf_result.get("trained"):
             self.ensemble.goal_model.save_model()
             report("rf", 100, f"Random Forest trained on {rf_result.get('samples', '?')} matches")
@@ -85,8 +106,11 @@ class ModelTrainingService:
             report("rf", 100, rf_result.get("message") or "Using heuristic Poisson (insufficient samples)")
 
         report("xgb", 15, "Training XGBoost on same dataset…")
-        with _step_heartbeat(report, "xgb", 15, 95, "Fitting XGBoost"):
+        with _step_heartbeat(
+            report, "xgb", 15, 95, "Fitting XGBoost", should_cancel=should_cancel,
+        ):
             xgb_result = self.ensemble.train_xgboost(dataset=dataset)
+        _check_cancel(should_cancel)
         if xgb_result.get("trained"):
             report("xgb", 100, f"XGBoost trained on {xgb_result.get('samples', '?')} matches")
         else:
@@ -101,17 +125,32 @@ class ModelTrainingService:
             "elo": {"teams": len(self.ensemble.elo.ratings)},
         }
         report("elo", 100, f"Elo fitted for {train_result['elo']['teams']} teams")
+        _check_cancel(should_cancel)
 
-        report("registry", 15, "Optimizing ensemble weights…")
-        with _step_heartbeat(report, "registry", 15, 90, "Optimizing weights"):
+        report("registry", 10, "Uploading model files…")
+        with _step_heartbeat(
+            report, "registry", 10, 35, "Saving models to storage", should_cancel=should_cancel,
+        ):
             save_models_after_train()
-            weights = optimize_ensemble_weights(self.ensemble)
+        _check_cancel(should_cancel)
+
+        report("registry", 40, "Tuning ensemble weights on validation sample…")
+        with _step_heartbeat(
+            report, "registry", 40, 85, "Optimizing weights", should_cancel=should_cancel,
+        ):
+            weights = optimize_ensemble_weights(
+                self.ensemble,
+                match_ids=list(dataset[3]),
+                should_cancel=should_cancel,
+            )
+        _check_cancel(should_cancel)
         version = register_model_run(
             weights=weights,
             active_models=[m for m in weights.keys()],
             metrics=train_result,
         )
         report("registry", 100, f"Registered model {version}")
+        _check_cancel(should_cancel)
 
         from src.services.prediction_generation_service import PredictionGenerationService
 
@@ -122,7 +161,9 @@ class ModelTrainingService:
         report("predictions", 0, "Regenerating all predictions…")
         pred_result = PredictionGenerationService(ensemble=self.ensemble).generate_all(
             progress_callback=pred_progress,
+            should_cancel=should_cancel,
         )
+        _check_cancel(should_cancel)
         total_matches = int(pred_result.get("matches") or 0)
         report(
             "predictions",
@@ -137,19 +178,35 @@ class ModelTrainingService:
         def cache_progress(pct: float, msg: str) -> None:
             report("cache", pct, msg)
 
-        with _step_heartbeat(report, "cache", 5, 95, "Refreshing UI cache"):
-            UICacheService().refresh_all(progress_cb=cache_progress, fast=True)
+        with _step_heartbeat(
+            report, "cache", 5, 95, "Refreshing UI cache", should_cancel=should_cancel,
+        ):
+            from src.services.pipeline_cancel import PipelineCancelled
+
+            try:
+                UICacheService().refresh_all(
+                    progress_cb=cache_progress,
+                    fast=True,
+                    should_cancel=should_cancel,
+                )
+            except PipelineCancelled:
+                raise ModelTrainingCancelled()
         invalidate_all()
         report("cache", 100, "UI cache refreshed")
+        _check_cancel(should_cancel)
 
         backtest_metrics = None
         report("backtest", 5, "Running tournament backtest…")
         try:
             from src.evaluation.backtest import backtest_tournament
 
-            with _step_heartbeat(report, "backtest", 5, 95, "Running backtest"):
+            with _step_heartbeat(
+                report, "backtest", 5, 95, "Running backtest", should_cancel=should_cancel,
+            ):
                 backtest_metrics = backtest_tournament(league_filter="World Cup", limit=500)
             report("backtest", 100, "Backtest complete")
+        except ModelTrainingCancelled:
+            raise
         except Exception as exc:
             logger.warning("Post-retrain backtest skipped: %s", exc)
             report("backtest", 100, "Backtest skipped")

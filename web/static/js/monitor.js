@@ -164,7 +164,7 @@ export async function pageMonitorOverview() {
     pageHeaderHtml("System health", "Data, predictions, model weights & gaps") +
     adminPanelHtml() +
     progressBarHtml("pipeline-progress") +
-    progressBarHtml("retrain-progress", { phaseLabel: "Starting model training…", showCancel: false }) +
+    progressBarHtml("retrain-progress", { phaseLabel: "Starting model training…", showCancel: true }) +
     `<div class="metric-grid">
       ${metricCard("Database", status.database_connected ? "Connected" : "Down", status.database_connected ? "ok" : "bad")}
       ${metricCard("Matches", status.matches_count ?? 0)}

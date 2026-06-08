@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from src import config
-from src.db import Row, _execute, _table_exists, get_connection
+from src.db import Row, _execute, _table_exists, get_connection, last_insert_id
 
 
 def _now() -> str:
@@ -401,7 +401,8 @@ def upsert_player(
                     """,
                     (None, *fields.values()),
                 )
-                row = _execute(conn, "SELECT last_insert_rowid() AS id").fetchone()
+                row_id = last_insert_id(conn, "players")
+                row = {"id": row_id}
         return int(row["id"])
 
 
@@ -861,22 +862,21 @@ def insert_sync_log(
                     started_at or _now(), finished_at,
                 ),
             ).fetchone()
-        else:
-            _execute(
-                conn,
-                """
-                INSERT INTO sync_log (
-                    job_name, status, source, records_affected, error_message,
-                    started_at, finished_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    job_name, status, source, records_affected, error_message,
-                    started_at or _now(), finished_at,
-                ),
-            )
-            row = _execute(conn, "SELECT last_insert_rowid() AS id").fetchone()
-        return int(row["id"])
+            return int(row["id"])
+        _execute(
+            conn,
+            """
+            INSERT INTO sync_log (
+                job_name, status, source, records_affected, error_message,
+                started_at, finished_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_name, status, source, records_affected, error_message,
+                started_at or _now(), finished_at,
+            ),
+        )
+        return last_insert_id(conn, "sync_log")
 
 
 def finish_sync_log(
@@ -1084,8 +1084,8 @@ def insert_model_registry(
                 json.dumps(metrics_json) if metrics_json is not None else None,
             ),
         )
-        row = _execute(conn, "SELECT last_insert_rowid() AS id").fetchone()
-    return int(row["id"])
+        row_id = last_insert_id(conn, "model_registry")
+    return row_id
 
 
 def get_latest_model_registry() -> Optional[Row]:
@@ -1238,21 +1238,20 @@ def insert_feature_store(
                     json.dumps(missing_flags) if missing_flags is not None else None,
                 ),
             ).fetchone()
-        else:
-            _execute(
-                conn,
-                """
-                INSERT INTO feature_store (match_id, generated_at, features_json, missing_flags_json)
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    match_id, now,
-                    json.dumps(features),
-                    json.dumps(missing_flags) if missing_flags is not None else None,
-                ),
-            )
-            row = _execute(conn, "SELECT last_insert_rowid() AS id").fetchone()
-        return int(row["id"])
+            return int(row["id"])
+        _execute(
+            conn,
+            """
+            INSERT INTO feature_store (match_id, generated_at, features_json, missing_flags_json)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                match_id, now,
+                json.dumps(features),
+                json.dumps(missing_flags) if missing_flags is not None else None,
+            ),
+        )
+        return last_insert_id(conn, "feature_store")
 
 
 def get_latest_features(match_id: int) -> Optional[Row]:

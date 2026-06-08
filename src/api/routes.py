@@ -774,6 +774,13 @@ def admin_model_retrain_progress() -> dict[str, Any]:
     return get_model_training_progress()
 
 
+@router.post("/admin/model/retrain/cancel")
+def admin_model_retrain_cancel(_auth: None = Depends(require_admin)) -> dict[str, Any]:
+    from src.services.model_training_runner import request_model_training_cancel
+
+    return request_model_training_cancel()
+
+
 @router.get("/evaluation/calibration")
 def evaluation_calibration(limit: int = 50) -> dict[str, Any]:
     from src.evaluation.calibration import evaluate_stored_predictions

@@ -63,6 +63,17 @@ def _adapt_sql(sql: str) -> str:
     return sql
 
 
+def last_insert_id(conn: Any, table: str, column: str = "id") -> int:
+    """Return auto-increment id after INSERT (SQLite + Postgres)."""
+    if config.USE_POSTGRES:
+        row = conn.execute(
+            f"SELECT currval(pg_get_serial_sequence('{table}', '{column}')) AS id"
+        ).fetchone()
+        return int(row["id"])
+    row = conn.execute("SELECT last_insert_rowid() AS id").fetchone()
+    return int(row["id"])
+
+
 def _ensure_db_dir() -> None:
     if not config.USE_POSTGRES:
         config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -1744,10 +1755,7 @@ def upsert_tournament_simulation(n_simulations: int, results: dict[str, Any]) ->
             """,
             (now, n_simulations, json.dumps(results)),
         )
-        if config.USE_POSTGRES:
-            row = conn.execute("SELECT currval(pg_get_serial_sequence('tournament_simulations','id')) AS id").fetchone()
-            return int(row["id"])
-        return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+        return last_insert_id(conn, "tournament_simulations")
 
 
 def get_latest_tournament_simulation() -> Optional[dict[str, Any]]:

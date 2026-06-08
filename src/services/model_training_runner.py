@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, Callable, Optional
 
 from src.services.model_training_service import ModelTrainingService
+from src.services.pipeline_cancel import ModelTrainingCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ TRAIN_STEPS: list[tuple[str, str, float]] = [
 ]
 
 _lock = threading.Lock()
+_cancel_requested = False
 _state: dict[str, Any] = {
     "running": False,
     "started_at": None,
@@ -40,9 +42,31 @@ _state: dict[str, Any] = {
 }
 
 
+def is_training_cancel_requested() -> bool:
+    with _lock:
+        return bool(_cancel_requested)
+
+
+def request_model_training_cancel() -> dict[str, Any]:
+    with _lock:
+        if not _state.get("running"):
+            return {"status": "no_active_run", "message": "No model training in progress"}
+        global _cancel_requested
+        _cancel_requested = True
+        _state["message"] = "Stopping after current step…"
+    logger.info("Model training cancel requested")
+    return {"status": "cancelling", "message": "Stop requested — finishing current step…"}
+
+
+def _clear_cancel() -> None:
+    global _cancel_requested
+    _cancel_requested = False
+
+
 def get_model_training_progress() -> dict[str, Any]:
     with _lock:
         d = dict(_state)
+        cancel_requested = bool(_cancel_requested)
     if not d.get("running") and not d.get("finished_at"):
         return {"running": False}
 
@@ -61,10 +85,11 @@ def get_model_training_progress() -> dict[str, Any]:
     step_idx = int(d.get("step_index") or 0)
     step_progress = float(d.get("step_progress_pct") or 0)
     steps_left = max(len(TRAIN_STEPS) - step_idx - 1, 0)
+    status = d.get("status")
 
     return {
         "running": bool(d.get("running")),
-        "status": d.get("status"),
+        "status": status,
         "error": d.get("error"),
         "result": d.get("result"),
         "overall_progress_pct": overall,
@@ -78,7 +103,6 @@ def get_model_training_progress() -> dict[str, Any]:
         "phase_label": d.get("step_label") or "Training",
         "message": d.get("message") or "",
         "elapsed_seconds": elapsed,
-        # No extrapolated ETA — it rises when remote DB is slow and misleads users.
         "estimated_remaining_seconds": None,
         "timing_hint": (
             f"Step {step_idx + 1}/{len(TRAIN_STEPS)} · typically 10–20 min total on remote DB"
@@ -87,6 +111,9 @@ def get_model_training_progress() -> dict[str, Any]:
         ),
         "steps_remaining": steps_left if d.get("running") else 0,
         "model_version": (d.get("result") or {}).get("model_version") if isinstance(d.get("result"), dict) else None,
+        "cancellable": bool(d.get("running")),
+        "cancel_requested": cancel_requested,
+        "cancelled": status == "cancelled" and not d.get("running"),
     }
 
 
@@ -103,6 +130,9 @@ def _update(
     message: str,
 ) -> None:
     """Map step progress into overall 0–100."""
+    if is_training_cancel_requested():
+        message = "Stopping after current step…"
+
     weights = [w for _, _, w in TRAIN_STEPS]
     total_w = sum(weights) or 1.0
     completed = sum(weights[:step_index])
@@ -136,6 +166,9 @@ def _finish(status: str, *, error: Optional[str] = None, result: Optional[dict] 
         if status == "success":
             _state["overall_progress_pct"] = 100.0
             _state["message"] = "Training complete"
+        elif status == "cancelled":
+            _state["message"] = error or "Training stopped by user"
+    _clear_cancel()
 
 
 def start_model_retrain_async() -> dict[str, Any]:
@@ -148,6 +181,7 @@ def start_model_retrain_async() -> dict[str, Any]:
     if pipeline_is_busy():
         return {"status": "busy", "message": "A pipeline is running — wait or cancel it first"}
 
+    _clear_cancel()
     now = datetime.utcnow().isoformat()
     with _lock:
         _state.clear()
@@ -168,9 +202,15 @@ def start_model_retrain_async() -> dict[str, Any]:
     def _worker() -> None:
         try:
             svc = ModelTrainingService()
-            result = svc.retrain_and_predict(progress_cb=_make_progress_cb())
+            result = svc.retrain_and_predict(
+                progress_cb=_make_progress_cb(),
+                should_cancel=is_training_cancel_requested,
+            )
             _finish("success", result=result)
             logger.info("Model retrain finished: %s", result.get("model_version"))
+        except ModelTrainingCancelled:
+            logger.info("Model retrain cancelled by user")
+            _finish("cancelled", error="Training stopped by user")
         except Exception as exc:
             logger.exception("Model retrain failed: %s", exc)
             _finish("failed", error=str(exc))
@@ -179,10 +219,12 @@ def start_model_retrain_async() -> dict[str, Any]:
     return {"status": "started", "message": "Model training started"}
 
 
-def _make_progress_cb() -> Callable[[int, str, float, str], None]:
+def _make_progress_cb() -> Callable[[str, float, str], None]:
     key_to_index = {k: i for i, (k, _, _) in enumerate(TRAIN_STEPS)}
 
     def progress(step_key: str, step_pct: float, message: str) -> None:
+        if is_training_cancel_requested():
+            raise ModelTrainingCancelled()
         idx = key_to_index.get(step_key, 0)
         label = TRAIN_STEPS[idx][1] if idx < len(TRAIN_STEPS) else step_key
         _update(idx, step_key, label, step_pct, message)

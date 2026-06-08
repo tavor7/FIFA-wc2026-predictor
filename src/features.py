@@ -364,6 +364,7 @@ def build_features_for_match(match_row: Any, for_training: bool = False) -> Matc
 
 def build_training_dataset(
     progress_cb: Optional[Callable[[int, int], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int], list[float]]:
     """
     Build feature matrix and target vectors from finished matches.
@@ -375,10 +376,14 @@ def build_training_dataset(
     if not finished:
         return np.empty((0, len(MatchFeatures.feature_names()))), np.array([]), np.array([]), [], []
 
+    from src.services.pipeline_cancel import ModelTrainingCancelled
+
     svc = FeatureGenerationService()
     X_rows, y_home, y_away, ids, weights = [], [], [], [], []
     total = len(finished)
     for i, m in enumerate(finished):
+        if should_cancel and should_cancel():
+            raise ModelTrainingCancelled()
         mf = svc.build(m, for_training=True)
         X_rows.append(mf.to_array())
         y_home.append(float(m["home_goals"]))

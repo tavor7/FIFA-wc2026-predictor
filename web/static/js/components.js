@@ -384,9 +384,11 @@ export function progressBarHtml(id = "pipeline-progress", options = {}) {
   const {
     phaseLabel = "Starting pipeline…",
     showCancel = id === "pipeline-progress",
+    cancelButtonId = id === "retrain-progress" ? "btn-retrain-cancel" : "btn-pipeline-cancel",
+    cancelLabel = id === "retrain-progress" ? "Stop training" : "Cancel",
   } = options;
   const cancelBtn = showCancel
-    ? `<button type="button" id="btn-pipeline-cancel" class="btn-ghost btn-pipeline-cancel hidden" aria-label="Cancel pipeline run">Cancel</button>`
+    ? `<button type="button" id="${cancelButtonId}" class="btn-ghost btn-pipeline-cancel hidden" aria-label="${cancelLabel}">${cancelLabel}</button>`
     : "";
   return `<div id="${id}" class="progress-panel hidden" role="status" aria-live="polite">
     <div class="progress-header">
@@ -408,15 +410,19 @@ export function progressBarHtml(id = "pipeline-progress", options = {}) {
 export function updateProgressBar(panelId, progress) {
   const panel = document.getElementById(panelId);
   if (!panel) return;
-  const cancelBtn = panel.querySelector("#btn-pipeline-cancel");
+  const cancelBtn = panel.querySelector(".btn-pipeline-cancel");
+  const isTraining = progress?.mode_label === "Model training";
+  const defaultCancelLabel = isTraining ? "Stop training" : "Cancel";
   if (!progress?.running) {
     if (progress?.cancelled) {
       panel.classList.remove("hidden", "progress-cancelling");
       panel.classList.add("progress-cancelled");
       panel.querySelector(".progress-fill").style.width = `${Math.round(progress.overall_progress_pct || 0)}%`;
       panel.querySelector(".progress-pct").textContent = "Stopped";
-      panel.querySelector(".progress-phase").textContent = "Pipeline cancelled";
-      panel.querySelector(".progress-steps").textContent = "Run stopped by user";
+      panel.querySelector(".progress-phase").textContent = isTraining ? "Training cancelled" : "Pipeline cancelled";
+      panel.querySelector(".progress-steps").textContent = isTraining
+        ? "Training stopped by user"
+        : "Run stopped by user";
       panel.querySelector(".progress-timing").textContent = progress.elapsed_seconds
         ? `${formatDuration(progress.elapsed_seconds)} elapsed`
         : "";
@@ -430,7 +436,6 @@ export function updateProgressBar(panelId, progress) {
       panel.classList.remove("hidden", "progress-cancelling", "progress-cancelled");
       panel.querySelector(".progress-fill").style.width = "100%";
       panel.querySelector(".progress-pct").textContent = "100%";
-      const isTraining = progress.mode_label === "Model training";
       panel.querySelector(".progress-phase").textContent = isTraining ? "Training complete" : "Complete";
       panel.querySelector(".progress-steps").textContent = isTraining
         ? (progress.model_version ? `Model ${progress.model_version}` : "All training steps finished")
@@ -451,7 +456,7 @@ export function updateProgressBar(panelId, progress) {
       panel.querySelector(".progress-fill").style.width = `${Math.round(progress.overall_progress_pct || 0)}%`;
       panel.querySelector(".progress-pct").textContent = "Failed";
       panel.querySelector(".progress-phase").textContent =
-        progress.mode_label === "Model training" ? "Training failed" : "Pipeline failed";
+        isTraining ? "Training failed" : "Pipeline failed";
       panel.querySelector(".progress-steps").textContent = progress.step_label || "Error";
       panel.querySelector(".progress-timing").textContent = progress.elapsed_seconds
         ? `${formatDuration(progress.elapsed_seconds)} elapsed`
@@ -477,7 +482,7 @@ export function updateProgressBar(panelId, progress) {
     const showCancel = progress.cancellable && !progress.cancel_requested;
     cancelBtn.classList.toggle("hidden", !showCancel);
     cancelBtn.disabled = !!progress.cancel_requested;
-    cancelBtn.textContent = progress.cancel_requested ? "Cancelling…" : "Cancel";
+    cancelBtn.textContent = progress.cancel_requested ? "Stopping…" : defaultCancelLabel;
   }
   const pct = Math.round(progress.overall_progress_pct || 2);
   const stepPct = Math.round(progress.step_progress_pct || 0);
@@ -493,13 +498,13 @@ export function updateProgressBar(panelId, progress) {
   const phaseStep = progress.phase_step_number ?? 1;
   const phaseTotal = progress.phase_steps_total ?? 1;
   const taskLabel = progress.step_label || phase;
+  const phaseSuffix = phaseTotal > 1 ? ` (${phaseStep}/${phaseTotal})` : "";
   panel.querySelector(".progress-steps").textContent =
-    `Step ${stepNum} of ${stepsTotal} · ${taskLabel} (${phaseStep}/${phaseTotal} in phase)` +
+    `Step ${stepNum}/${stepsTotal} · ${taskLabel}${phaseSuffix}` +
     (stepPct > 0 && stepPct < 100 ? ` · ${stepPct}%` : "");
 
   const timingParts = [];
   const remaining = progress.estimated_remaining_seconds;
-  const isTraining = progress.mode_label === "Model training";
   if (isTraining) {
     if (progress.timing_hint) {
       timingParts.push(progress.timing_hint);
