@@ -11,13 +11,13 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from src import db
+from src import config, db
 from src.api.routes import router
 from src.cache.response_cache import cache_key, get_cache_meta, get_cached, _ttl_for_path
 from src.model_storage import load_models_on_startup
@@ -180,9 +180,23 @@ if STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> FileResponse:
+    icon = STATIC_DIR / "favicon.svg"
+    if not icon.is_file():
+        raise HTTPException(status_code=404, detail="Favicon not found")
+    return FileResponse(icon, media_type="image/svg+xml")
+
+
 @app.get("/")
-def web_app() -> FileResponse:
+def web_app() -> HTMLResponse:
+    """Serve index.html with cache-busted static asset URLs after each deploy."""
     index = WEB_DIR / "index.html"
     if not index.is_file():
         raise HTTPException(status_code=404, detail="Web UI not found")
-    return FileResponse(index)
+    version = config.GIT_COMMIT or "local"
+    html = index.read_text(encoding="utf-8").replace("__ASSET_VERSION__", version)
+    return HTMLResponse(
+        html,
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )

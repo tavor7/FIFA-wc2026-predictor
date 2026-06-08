@@ -1,8 +1,7 @@
-import { request } from "./api.js";
+import { request, adminRequest, getAdminToken } from "./api.js";
 import {
   adminPanelHtml,
   dataFreshnessBadge,
-  escapeHtml,
   metricCard,
   latencyStatus,
   pageHeaderHtml,
@@ -11,6 +10,7 @@ import {
   tableHtml,
   formatDateIsrael,
 } from "./components.js";
+import { escapeHtml } from "./flags.js";
 
 const MONITOR_TABS = [
   { id: "overview", label: "Overview", href: "#/monitor" },
@@ -29,6 +29,19 @@ export function monitorNavHtml(active = "overview") {
         `<a class="monitor-tab${t.id === active ? " active" : ""}" href="${t.href}">${escapeHtml(t.label)}</a>`
     ).join("")}
   </nav>`;
+}
+
+function adminSignInHint() {
+  return `<p class="empty admin-signin-hint">Some diagnostics require admin access. Click <strong>Run full pipeline</strong> below and enter the admin password to unlock audit data.</p>`;
+}
+
+function adminRequiredPage(title, subtitle, tab = "overview") {
+  return (
+    pageHeaderHtml(title, subtitle) +
+    monitorNavHtml(tab) +
+    adminPanelHtml() +
+    adminSignInHint()
+  );
 }
 
 function criteriaBadges(criteria) {
@@ -50,7 +63,7 @@ export async function pageMonitorOverview() {
   const [status, freshness, summary, calibration] = await Promise.all([
     request("/monitor/status"),
     request("/meta/freshness").catch(() => null),
-    request("/admin/audit/summary", { noCache: true }).catch(() => null),
+    adminRequest("/admin/audit/summary"),
     request("/evaluation/calibration?limit=30").catch(() => null),
   ]);
   window.setPageMeta?.({ lastUpdated: status.last_updated, showTimestamp: false });
@@ -87,7 +100,7 @@ export async function pageMonitorOverview() {
     monitorNavHtml("overview") +
     adminPanelHtml() +
     progressBarHtml("pipeline-progress") +
-    (summary?.success_criteria ? criteriaBadges(summary.success_criteria) : "") +
+    (summary?.success_criteria ? criteriaBadges(summary.success_criteria) : !getAdminToken() ? adminSignInHint() : "") +
     (status.last_updated ? `<div class="monitor-updated">${dataFreshnessBadge(status.last_updated)}</div>` : "") +
     section(
       "Deployment",
@@ -127,10 +140,15 @@ export async function pageMonitorOverview() {
 }
 
 export async function pageMonitorPipeline() {
-  const [status, runs] = await Promise.all([
-    request("/admin/pipeline/status", { noCache: true }).catch(() => ({ active: {}, steps: [] })),
-    request("/admin/pipeline/runs?limit=15", { noCache: true }).catch(() => ({ runs: [] })),
+  if (!getAdminToken()) {
+    return adminRequiredPage("Pipeline history", "Step diagram and run timeline", "pipeline");
+  }
+  const [statusRaw, runsRaw] = await Promise.all([
+    adminRequest("/admin/pipeline/status"),
+    adminRequest("/admin/pipeline/runs?limit=15"),
   ]);
+  const status = statusRaw || { active: {}, steps: [] };
+  const runs = runsRaw || { runs: [] };
   const active = status.active || {};
   const steps = status.steps || [];
   const stepStates = {};
@@ -188,7 +206,13 @@ export async function pageMonitorPipeline() {
 }
 
 export async function pageMonitorAudit(offset = 0) {
-  const data = await request(`/admin/audit/predictions?limit=50&offset=${offset}`, { noCache: true });
+  if (!getAdminToken()) {
+    return adminRequiredPage("Prediction audit", "Per-match prediction completeness", "audit");
+  }
+  const data = await adminRequest(`/admin/audit/predictions?limit=50&offset=${offset}`);
+  if (!data) {
+    return adminRequiredPage("Prediction audit", "Per-match prediction completeness", "audit");
+  }
   const s = data.summary || {};
   const rows = (data.items || []).map((r) => {
     const statusCls = !r.has_prediction ? "bad" : r.stale_cache ? "warn" : "ok";
@@ -238,7 +262,13 @@ export async function pageMonitorAudit(offset = 0) {
 }
 
 export async function pageMonitorDataFlow() {
-  const flow = await request("/admin/audit/data-flow", { noCache: true });
+  if (!getAdminToken()) {
+    return adminRequiredPage("Data flow", "Where data is lost between pipeline stages", "data-flow");
+  }
+  const flow = await adminRequest("/admin/audit/data-flow");
+  if (!flow) {
+    return adminRequiredPage("Data flow", "Where data is lost between pipeline stages", "data-flow");
+  }
   const stages = flow.stages || [];
   const max = Math.max(...stages.map((s) => s.count), 1);
   const funnel = stages
@@ -269,7 +299,13 @@ export async function pageMonitorDataFlow() {
 }
 
 export async function pageMonitorPerformance() {
-  const perf = await request("/admin/audit/performance", { noCache: true });
+  if (!getAdminToken()) {
+    return adminRequiredPage("Performance", "API and database latency", "performance");
+  }
+  const perf = await adminRequest("/admin/audit/performance");
+  if (!perf) {
+    return adminRequiredPage("Performance", "API and database latency", "performance");
+  }
   const endpoints = (perf.slowest_endpoints || []).map(
     (e) => `<tr>
       <td>${escapeHtml(e.path || "—")}</td>
@@ -311,7 +347,13 @@ export async function pageMonitorPerformance() {
 }
 
 export async function pageMonitorCache() {
-  const cache = await request("/admin/audit/cache", { noCache: true });
+  if (!getAdminToken()) {
+    return adminRequiredPage("Cache validation", "Stale, orphan, and missing UI cache entries", "cache");
+  }
+  const cache = await adminRequest("/admin/audit/cache");
+  if (!cache) {
+    return adminRequiredPage("Cache validation", "Stale, orphan, and missing UI cache entries", "cache");
+  }
   const s = cache.summary || {};
   const rows = (cache.match_cards || [])
     .filter((r) => r.status !== "ok")
@@ -347,7 +389,13 @@ export async function pageMonitorCache() {
 }
 
 export async function pageMonitorDataQuality() {
-  const dq = await request("/admin/audit/data-quality", { noCache: true });
+  if (!getAdminToken()) {
+    return adminRequiredPage("Data quality", "Team squads, ratings, injuries, and fixtures", "data-quality");
+  }
+  const dq = await adminRequest("/admin/audit/data-quality");
+  if (!dq) {
+    return adminRequiredPage("Data quality", "Team squads, ratings, injuries, and fixtures", "data-quality");
+  }
   const s = dq.summary || {};
   const rows = (dq.teams || []).map((t) => {
     const cls = t.status === "ok" ? "ok" : t.status === "warn" ? "warn" : "bad";

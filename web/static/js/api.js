@@ -82,6 +82,22 @@ export async function adminLogin(password) {
   return data;
 }
 
+/** Admin-only GET: skips the network call when not signed in (avoids 401 noise). */
+export async function adminRequest(path, options = {}) {
+  if (!getAdminToken()) return null;
+  try {
+    return await request(path, { noCache: true, ...options });
+  } catch (err) {
+    const msg = String(err?.message || "");
+    if (msg.includes("401") || msg.toLowerCase().includes("unauthorized")) {
+      setAdminToken(null);
+      return null;
+    }
+    if (options.throwOnError) throw err;
+    return null;
+  }
+}
+
 export async function request(path, options = {}) {
   const method = (options.method || "GET").toUpperCase();
   const useCache = method === "GET" && !options.noCache;
