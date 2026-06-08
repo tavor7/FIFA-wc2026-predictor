@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Generator, Optional, Union
 
 from src import config
+
+logger = logging.getLogger(__name__)
+PG_MIGRATION_LOCK_ID = 20260608
 
 Row = Union[dict[str, Any], sqlite3.Row]
 
@@ -427,12 +432,65 @@ SCHEMA_POSTGRES = open(
 ).read()
 
 
+def _is_retryable_db_error(exc: BaseException) -> bool:
+    """True for deadlocks / lock contention during deploy overlap."""
+    seen: set[int] = set()
+    cur: Optional[BaseException] = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        name = type(cur).__name__
+        if name in (
+            "DeadlockDetected",
+            "SerializationFailure",
+            "LockNotAvailable",
+            "OperationalError",
+        ):
+            return True
+        cur = cur.__cause__ or cur.__context__  # type: ignore[assignment]
+    return False
+
+
 def init_db() -> None:
-    """Create tables if they do not exist."""
+    """Create tables if they do not exist (retries deadlocks on Postgres)."""
+    for attempt in range(6):
+        try:
+            _init_db_once()
+            return
+        except Exception as exc:
+            if _is_retryable_db_error(exc) and attempt < 5:
+                wait = min(8.0, 0.4 * (2**attempt))
+                logger.warning(
+                    "DB init attempt %s failed (%s), retrying in %.1fs",
+                    attempt + 1,
+                    exc,
+                    wait,
+                )
+                time.sleep(wait)
+                continue
+            raise
+
+
+def _init_db_once() -> None:
+    """Single migration attempt."""
     with get_connection() as conn:
-        script = SCHEMA_POSTGRES if config.USE_POSTGRES else SCHEMA_SQLITE
-        _executescript(conn, script)
-        _migrate_extended_schema(conn)
+        if config.USE_POSTGRES:
+            _execute(conn, "SELECT pg_advisory_lock(%s)", (PG_MIGRATION_LOCK_ID,))
+            try:
+                # Existing production DB: incremental migrations only.
+                # Replaying full schema.sql on every deploy deadlocks with the old instance.
+                if _table_exists(conn, "matches"):
+                    _migrate_extended_schema(conn)
+                else:
+                    _executescript(conn, SCHEMA_POSTGRES)
+                    _migrate_extended_schema(conn)
+            finally:
+                try:
+                    _execute(conn, "SELECT pg_advisory_unlock(%s)", (PG_MIGRATION_LOCK_ID,))
+                except Exception:
+                    logger.debug("advisory unlock skipped", exc_info=True)
+        else:
+            _executescript(conn, SCHEMA_SQLITE)
+            _migrate_extended_schema(conn)
 
 
 def _table_columns(conn: Any, table: str) -> set[str]:

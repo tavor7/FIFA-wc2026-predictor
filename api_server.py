@@ -37,8 +37,19 @@ ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "true").lower() in ("1", "true"
 STARTUP_SEED = os.getenv("STARTUP_SEED", "true").lower() in ("1", "true", "yes")
 
 
+def _background_startup() -> None:
+    """DB migrations + seed after the server is listening (Render port binding)."""
+    try:
+        db.init_db()
+        logger.info("Database initialization finished")
+    except Exception as exc:
+        logger.error("Database initialization failed: %s", exc)
+        return
+    _startup_seed_worker()
+
+
 def _startup_seed_worker() -> None:
-    """Run after the server is listening — avoids Render deploy port-timeout."""
+    """Baseline data load and FC26 import when needed."""
     try:
         ensure_baseline_data(min_matches=10, run_predictions=False)
         from src import db_extended as ext
@@ -137,10 +148,9 @@ class TimingAndCacheMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db.init_db()
     load_models_on_startup()
-    if STARTUP_SEED:
-        threading.Thread(target=_startup_seed_worker, daemon=True).start()
+    # Bind $PORT before migrations — init_db can deadlock with the previous deploy.
+    threading.Thread(target=_background_startup, daemon=True).start()
     if ENABLE_SCHEDULER:
         threading.Thread(target=_delayed_scheduler_start, daemon=True).start()
     yield
