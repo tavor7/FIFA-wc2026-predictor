@@ -256,6 +256,24 @@ def count_fc26_players_for_team(team_id: int) -> int:
         return int(dict(row)["c"])
 
 
+def fc26_per_team_counts() -> dict[int, int]:
+    """team_id -> FC26 player count (one query for all teams)."""
+    with get_connection() as conn:
+        if not _table_exists(conn, "players"):
+            return {}
+        rows = _execute(
+            conn,
+            """
+            SELECT team_id, COUNT(*) AS c
+            FROM players
+            WHERE api_player_id >= ?
+            GROUP BY team_id
+            """,
+            (FC26_ID_OFFSET,),
+        ).fetchall()
+    return {int(dict(r)["team_id"]): int(dict(r)["c"]) for r in rows}
+
+
 def get_squad_players(team_id: int, *, max_size: Optional[int] = None) -> list[Row]:
     """
     Squad roster for UI: prefer EA FC 26 ratings; fill thin squads from API data.

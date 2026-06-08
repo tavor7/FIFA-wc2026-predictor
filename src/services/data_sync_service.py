@@ -79,6 +79,7 @@ class DataSyncService:
         *,
         force: bool = False,
         should_cancel: Optional[Callable[[], bool]] = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
     ) -> dict[str, Any]:
         """Load top-N Kaggle FC26 players per nation (re-import when stale)."""
         _check_cancel(should_cancel)
@@ -106,16 +107,53 @@ class DataSyncService:
             squad_size=squad_size_target(),
             download=not FC26_CSV_PATH.is_file(),
             should_cancel=should_cancel,
+            progress_callback=progress_callback,
         )
         result["status"] = "imported"
         _log_sync("import_fc26_players", result, source="kaggle_fc26")
         return result
 
-    def sync_team_stats(self, should_cancel: Optional[Callable[[], bool]] = None) -> dict[str, Any]:
-        fc26 = self.ensure_fc26_squads(should_cancel=should_cancel)
+    def sync_team_stats(
+        self,
+        should_cancel: Optional[Callable[[], bool]] = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
+    ) -> dict[str, Any]:
+        def report(pct: float, msg: str) -> None:
+            if progress_callback:
+                progress_callback(pct, msg)
+
+        report(5, "Checking Kaggle squads…")
+        fc26 = self.ensure_fc26_squads(
+            should_cancel=should_cancel,
+            progress_callback=report,
+        )
         _check_cancel(should_cancel)
-        # Kaggle has <26 players for some nations — API fills the rest
-        result = sync_squads(fill_thin_squads=True, thin_teams_only=self.fast, should_cancel=should_cancel)
+
+        from src.seed.import_fc26_players import needs_fc26_reimport
+
+        fc26_total = ext.count_fc26_players()
+        if self.fast and not needs_fc26_reimport() and fc26_total >= 400:
+            report(100, "Squads ready (Kaggle) — skipping slow API top-up")
+            ext.upsert_data_freshness("team_stats", source="kaggle_fc26")
+            ext.upsert_data_freshness("player_stats", source="kaggle_fc26")
+            return {
+                "fc26": fc26,
+                "status": "skipped_api",
+                "teams_processed": 0,
+                "teams_skipped_full_fc26": 48,
+                "players_written": 0,
+                "errors": 0,
+            }
+
+        report(35, "Topping up thin squads from API (limited in fast mode)…")
+        max_teams = 6 if self.fast else None
+        result = sync_squads(
+            fill_thin_squads=True,
+            thin_teams_only=self.fast,
+            should_cancel=should_cancel,
+            max_teams=max_teams,
+            progress_callback=report,
+        )
         ext.upsert_data_freshness("team_stats", source="api-football")
         ext.upsert_data_freshness("player_stats", source="api-football")
         _log_sync("sync_team_stats", result)

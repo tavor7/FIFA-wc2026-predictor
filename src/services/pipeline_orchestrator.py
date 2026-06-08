@@ -149,7 +149,11 @@ class PipelineOrchestrator:
                         continue
                     tick += 1
                     fake_pct = min(88, 12 + tick * 8)
-                    progress(step_idx, step_key, fake_pct, f"{label}…")
+                    elapsed = int(time.monotonic() - start)
+                    if fake_pct >= 88:
+                        progress(step_idx, step_key, fake_pct, f"{label}… still running ({elapsed}s)")
+                    else:
+                        progress(step_idx, step_key, fake_pct, f"{label}…")
 
             progress(step_idx, step_key, 8, f"{label}…")
             t = threading.Thread(target=_tick, daemon=True)
@@ -240,8 +244,14 @@ class PipelineOrchestrator:
             if 1 in steps_to_run:
                 _between_steps()
                 with track_step(1) as sm:
-                    with heartbeat(1, "B", STEP_LABELS["B"]):
-                        r = self.sync.sync_team_stats(should_cancel=cancel_fn)
+
+                    def squad_progress(pct: float, msg: str) -> None:
+                        progress(1, "B", pct, msg)
+
+                    r = self.sync.sync_team_stats(
+                        should_cancel=cancel_fn,
+                        progress_callback=squad_progress,
+                    )
                     sm.records_written = r.get("updated", 0) or r.get("players", 0) or 0
                     records_written += sm.records_written
                 progress(1, "B", 100, "Teams synced")

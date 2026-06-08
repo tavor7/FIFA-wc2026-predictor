@@ -159,6 +159,7 @@ def import_fc26_players(
     squad_size: Optional[int] = None,
     download: bool = True,
     should_cancel: Optional[Callable[[], bool]] = None,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> dict[str, Any]:
     """
     Load Kaggle FC26 ratings for WC 2026 national teams.
@@ -191,9 +192,17 @@ def import_fc26_players(
     thin_teams: list[dict[str, Any]] = []
     per_team_counts: dict[str, int] = {}
 
-    for team_name, group in df.groupby("team"):
+    grouped = list(df.groupby("team"))
+    total_teams = len(grouped)
+    if progress_callback:
+        progress_callback(8, f"Importing Kaggle squads (0/{total_teams} teams)…")
+
+    for team_idx, (team_name, group) in enumerate(grouped):
         if should_cancel and should_cancel():
             raise PipelineCancelled()
+        if progress_callback and total_teams:
+            pct = min(92, 8 + round((team_idx / total_teams) * 84, 1))
+            progress_callback(pct, f"Importing Kaggle squads ({team_idx + 1}/{total_teams}): {team_name}")
         team_id = _resolve_team_id(team_name)
         teams_touched.add(team_name)
         squad = group.head(squad_size)
@@ -211,6 +220,9 @@ def import_fc26_players(
                 **kwargs,
             )
             written += 1
+
+    if progress_callback:
+        progress_callback(100, f"Kaggle import done ({written} players)")
 
     dbx.insert_sync_log(
         "import_fc26_players",
@@ -246,11 +258,11 @@ def needs_fc26_reimport() -> bool:
     if total == 0:
         return True
     avg = total / n_teams if n_teams else 0
-    # Thin Kaggle nations pull the average down; 24+ usually means a 30-player import ran
     if avg < min(target - 4, 24):
         return True
+    per_team = dbx.fc26_per_team_counts()
     for row in dbx.get_tournament_teams():
-        if dbx.count_fc26_players_for_team(int(row["id"])) == 0:
+        if per_team.get(int(row["id"]), 0) == 0:
             return True
     return False
 

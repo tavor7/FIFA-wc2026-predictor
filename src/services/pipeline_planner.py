@@ -66,10 +66,10 @@ def missing_prediction_ids() -> list[int]:
 
 def thin_squad_teams() -> list[str]:
     target = squad_size_target()
+    per_team = ext.fc26_per_team_counts()
     thin: list[str] = []
     for row in ext.get_tournament_teams():
-        n = ext.count_fc26_players_for_team(int(row["id"]))
-        if n < target:
+        if per_team.get(int(row["id"]), 0) < target:
             thin.append(row["name"])
     return thin
 

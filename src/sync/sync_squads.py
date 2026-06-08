@@ -55,7 +55,7 @@ def _parse_squad_player(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tournament_team_api_map() -> dict[int, str]:
-    """API team id → name for all 48 WC nations we can resolve."""
+    """API team id → name for WC nations (tournament table first, matches as fallback)."""
     team_map: dict[int, str] = {}
 
     for row in dbx.get_tournament_teams():
@@ -64,7 +64,10 @@ def _tournament_team_api_map() -> dict[int, str]:
         if api_id:
             team_map[int(api_id)] = d["name"]
 
-    for match in db.get_upcoming_matches(limit=500, tournament_only=True):
+    if len(team_map) >= 40:
+        return team_map
+
+    for match in db.get_upcoming_matches(limit=120, tournament_only=True):
         for side in ("home", "away"):
             api_id = match.get(f"{side}_team_id")
             name = match[f"{side}_team"]
@@ -84,6 +87,8 @@ def sync_squads(
     fill_thin_squads: bool = False,
     thin_teams_only: bool = False,
     should_cancel: Optional[Callable[[], bool]] = None,
+    max_teams: Optional[int] = None,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> dict[str, Any]:
     """Fetch squad data for WC 2026 teams and fill gaps where Kaggle FC26 data is thin."""
     from src.services.pipeline_cancel import PipelineCancelled
@@ -93,26 +98,44 @@ def sync_squads(
 
     db.init_db()
     team_map = _tournament_team_api_map()
+    target = full_squad_size()
+    fc26_counts = dbx.fc26_per_team_counts()
+
+    work: list[tuple[int, str, int]] = []
+    teams_skipped = 0
+    for api_team_id, team_name in team_map.items():
+        internal_team_id = dbx.upsert_team(team_name, api_team_id=api_team_id)
+        fc26_count = fc26_counts.get(internal_team_id, 0)
+        if thin_teams_only or fill_thin_squads:
+            if fc26_count >= target:
+                teams_skipped += 1
+                continue
+        elif fc26_count >= min(15, target):
+            teams_skipped += 1
+            continue
+        work.append((api_team_id, team_name, internal_team_id))
+
+    if max_teams is not None and len(work) > max_teams:
+        work = work[:max_teams]
 
     teams_processed = 0
     players_written = 0
-    teams_skipped = 0
     errors = 0
+    total = len(work)
 
-    for api_team_id, team_name in team_map.items():
+    if progress_callback:
+        if total == 0:
+            progress_callback(100, "All squads already loaded")
+        else:
+            progress_callback(15, f"API squad sync for {total} team(s)…")
+
+    for i, (api_team_id, team_name, internal_team_id) in enumerate(work):
         if should_cancel and should_cancel():
             raise PipelineCancelled()
+        if progress_callback and total:
+            pct = 15 + round((i / total) * 80, 1)
+            progress_callback(pct, f"Squad sync {i + 1}/{total}: {team_name}")
         try:
-            internal_team_id = dbx.upsert_team(team_name, api_team_id=api_team_id)
-            fc26_count = dbx.count_fc26_players_for_team(internal_team_id)
-            target = full_squad_size()
-            if thin_teams_only or fill_thin_squads:
-                if fc26_count >= target:
-                    teams_skipped += 1
-                    continue
-            elif fc26_count >= min(15, target):
-                teams_skipped += 1
-                continue
             raw_players = client.get_players(api_team_id, season=season)
             teams_processed += 1
             for item in raw_players:
@@ -134,9 +157,13 @@ def sync_squads(
             logger.warning("Squad sync failed for team %s (%s): %s", team_name, api_team_id, exc)
             errors += 1
 
+    if progress_callback:
+        progress_callback(100, f"Squad sync done ({teams_processed} teams)")
+
     result = {
         "teams_processed": teams_processed,
         "teams_skipped_full_fc26": teams_skipped,
+        "teams_deferred": max(0, len(team_map) - teams_skipped - teams_processed - errors),
         "players_written": players_written,
         "errors": errors,
     }
